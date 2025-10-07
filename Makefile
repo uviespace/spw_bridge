@@ -37,6 +37,6 @@ endif
 #	$(CC) $(CPPFLAGS) $(CFLAGS) -c $^ -o $@
 
 all: $(SOURCES)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $(TARGET)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $(TARGET)
 
 

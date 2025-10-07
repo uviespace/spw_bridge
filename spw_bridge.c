@@ -68,6 +68,7 @@
 #define DEFAULT_LINK_DIV 20
 #define DEFAULT_LINK_SPEED 200
 
+#define STAR_DEVICE_TYPE_BRICK_MKIII	 19
 #define STAR_DEVICE_TYPE_BRICK_MKII	 9
 #define STAR_DEVICE_TYPE_PCIE		11
 #define STAR_DEVICE_TYPE_BRICK_MKIV	36
@@ -1418,6 +1419,8 @@ int main(int argc, char **argv)
 
 			break;
 
+		case STAR_DEVICE_TYPE_BRICK_MKIII:
+			break;
 		case STAR_DEVICE_TYPE_BRICK_MKIV:
 #if 1
 			/* always set base transmit clock speed to 100 (== 200 link speed) */
