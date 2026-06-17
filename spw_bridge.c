@@ -65,10 +65,8 @@
 #define DEFAULT_CHAN 1
 
 
-#define DEFAULT_LINK_DIV 20
-#define DEFAULT_LINK_SPEED 200
+#define DEFAULT_LINK_SPEED 10.0
 
-#define STAR_DEVICE_TYPE_BRICK_MKIII	 19
 #define STAR_DEVICE_TYPE_BRICK_MKII	 9
 #define STAR_DEVICE_TYPE_PCIE		11
 #define STAR_DEVICE_TYPE_BRICK_MKIV	36
@@ -1145,8 +1143,7 @@ int main(int argc, char **argv)
 	char host[128];
 	unsigned char path[256];
 
-	unsigned short link_speed;
-	U32 link_speed_U32;
+	double sig_rate;
 	unsigned short path_len = 0;
 
 	int opt;
@@ -1154,10 +1151,9 @@ int main(int argc, char **argv)
 	unsigned int port;
 	unsigned int rmap_port;
 	unsigned int channel;
-	unsigned int dev_type;
 	unsigned int link_id;
-	unsigned int link_div;
 	unsigned int dev_num = 0;
+	int reset_dev = 0;
 
 	struct addrinfo *res;
 
@@ -1165,7 +1161,7 @@ int main(int argc, char **argv)
 
 	PORT_STATUS_CONTROL port_status;
 	STAR_CFG_SPW_LINK_STATUS link_status;
-	
+
 	enum {SERVER, CLIENT} mode;
 
 
@@ -1182,11 +1178,10 @@ int main(int argc, char **argv)
 	sprintf(host, "%s", DEFAULT_ADDR);
 	skip_header_bytes = 0;
 	pkt_throttle_usec = 0;
-	link_div = DEFAULT_LINK_DIV;
-	link_speed = DEFAULT_LINK_SPEED;
+	sig_rate = DEFAULT_LINK_SPEED;
 
 
-	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:D:L:S:PFRG::h")) != -1) {
+	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:PFGXR::h")) != -1) {
 		switch (opt) {
 		case 'i':
 			dev_num = strtol(optarg, NULL, 0);
@@ -1255,11 +1250,12 @@ int main(int argc, char **argv)
 		case 't':
 			pkt_throttle_usec = strtol(optarg, NULL, 0);
 			break;
-		case 'D':
-			link_div = strtol(optarg, NULL, 0);
-			break;
 		case 'S':
-		        link_speed = (unsigned short) strtoul(optarg, NULL, 0);
+		        sig_rate = (double)strtoul(optarg, NULL, 0);
+			if (sig_rate < 2.0 || sig_rate > 400.) {
+				printf("\nInvalid link rate %g Mbps, must be between 2 and 400\n\n", sig_rate);
+				exit(-1);
+			}
 			break;
 		case 'L':
 			link_id = strtol(optarg, NULL, 0);
@@ -1280,6 +1276,9 @@ int main(int argc, char **argv)
 
 			enable_rmap = 1;
 			break;
+		case 'X':
+			reset_dev = 1;
+			break;
 
 		case 'h':
 		default:
@@ -1292,13 +1291,13 @@ int main(int argc, char **argv)
 			printf("  -r ADDRESS:PORT           client mode: address and port of remote target\n");
 			printf("  -d NUM                    number of header bytes to drop from incoming SpW packet (default %d)\n", skip_header_bytes);
 			printf("  -t timeout (µs)           throttle transmission of SpW packets by inserting a delay between packets (default %d)\n", pkt_throttle_usec);
-			printf("  -D LINKDIV                link rate divider (default %d)\n", link_div);
-			printf("  -S LINKSPEED              link speed in MHz (default %d)\n", link_speed);
+			printf("  -S LINKSPEED              link speed in Mbit/s (default %g)\n", DEFAULT_LINK_SPEED);
 			printf("  -L LINKID                 id of link to set speed/divider for; needed with Brick Mk2 port 2; (default link_id = channel). \n");
 			printf("  -P                        parse network byte stream for PUS packets\n");
 			printf("  -F                        parse network byte stream for FEE data packets\n");
 			printf("  -R RMAP_PORT              exchange RMAP via RMAP_PORT\n");
 			printf("  -G                        use GRESB protocol for network exchange\n");
+			printf("  -X                        execute a device reset\n");
 			printf("  -h, --help                print this help and exit\n");
 			printf("\n");
 			exit(0);
@@ -1395,95 +1394,18 @@ int main(int argc, char **argv)
 
 	dev_id = select_device(dev_num);
 
-	channel = select_channel(dev_id, channel);
-
-	dev_type = STAR_getDeviceType(dev_id);
-
-	switch(dev_type) {
-		case STAR_DEVICE_TYPE_BRICK_MKII:
-			/* always set link speed to 200 */
-			if (!CFG_BRICK_MK2_setLinkClockFrequency(dev_id, link_id, STAR_CFG_BRICK_MK2_LINK_FREQ_200)) {
-				printf("Failed to set link clock frequency for link %d.\n", link_id);
-				exit(EXIT_FAILURE);
-			}
-			if (!CFG_MK2_setLinkRateDivider(dev_id, link_id, link_div)) {
-				printf("Failed to set link divider for link %d.\n", link_id);
-				exit(EXIT_FAILURE);
-			}
-
-			printf("Brick Mk2 port %d link speed configured: %d Mbits/s\n", link_id, 200/link_div);
-
-			CFG_MK2_getMeasuredLinkSpeed(dev_id, link_id, &link_speed);
-
-			printf("Brick Mk2 port %d link speed measured:   %g Mbits/s\n", link_id, link_speed * STAR_CFG_BRICK_MK2_LINK_SPEED_UNITS_KBPS / 1024.);
-
-			break;
-
-		case STAR_DEVICE_TYPE_BRICK_MKIII:
-			break;
-		case STAR_DEVICE_TYPE_BRICK_MKIV:
-#if 1
-			/* always set base transmit clock speed to 100 (== 200 link speed) */
-			/* note in the Mk4, the max speed is 400 MBit/s) */
-			STAR_CFG_MK2_BASE_TRANSMIT_CLOCK tx_clk = {.divisor = 2, .multiplier = 2};
-			if (!CFG_BRICK_MK3_setTransmitClock(dev_id, link_id, tx_clk)) {
-				printf("Failed to set link clock frequency for link %d.\n", link_id);
-				exit(EXIT_FAILURE);
-			}
-
-#endif
-			if (!CFG_MK2_setLinkRateDivider(dev_id, link_id, link_div)) {
-				printf("Failed to set link divider for link %d.\n", link_id);
-				exit(EXIT_FAILURE);
-			}
-
-			printf("Brick Mk2 port %d link speed configured: %d Mbits/s\n", link_id, 200/link_div);
-
-			CFG_MK2_getMeasuredLinkSpeed(dev_id, link_id, &link_speed);
-
-			printf("Brick Mk3 port %d link speed measured:   %g Mbits/s\n", link_id, link_speed * STAR_CFG_MK2_LINK_SPEED_UNITS_KBPS / 1024.);
-
-			break;
-
-		case STAR_DEVICE_TYPE_PCIE:
-#if 0			/* always set link speed to 200 */
-			if (!CFG_PCIE_setLinkClockFrequency(dev_id, link_id, STAR_CFG_PCIMK2_LINK_FREQ_200)) {
-				printf("Failed to set link clock frequency for link %d.\n", link_id);
-				exit(EXIT_FAILURE);
-			}
-			if (!CFG_PCIE_setLinkRateDivider(dev_id, link_id, link_div)) {
-				printf("Failed to set link divider for link %d.\n", link_id);
-				exit(EXIT_FAILURE);
-			}
-
-			printf("PCIe port %d link speed configured: %d Mbits/s\n", link_id, 200/link_div);
-
-			break;
-#endif
-		case STAR_DEVICE_TYPE_PCIE_MKII:
-
-		  /* configure a link speed of 200 */
-		  if (!CFG_PCIE_MK2_setTransmitSignallingRate(dev_id, link_id, link_speed)) {
-				printf("Failed to set link clock frequency for link %d.\n", link_id);
-				exit(EXIT_FAILURE);
-		  }
-
-		  printf("PCIe Mk2 port %d link speed configured: %d Mbits/s\n", link_id, link_speed);
-
-		  CFG_PCIE_MK2_getTransmitSignallingRate(dev_id, link_id, &link_speed_U32);
-
-		  printf("PCIe Mk2 port %d link speed configured: %d Mbits/s\n", link_id, link_speed_U32);
-
-		  break;
-
-
-		default:
-			printf("Unknown device with ID %d, don't know how to configure link speed.\n", dev_type);
-			exit(EXIT_FAILURE);
+	if (reset_dev) {
+		printf("Attempting to reset the device, this will have an effect on other ports!\n");
+		STAR_resetDevice(dev_id);
 	}
 
-	spw_chan_id = STAR_openChannelToLocalDevice(dev_id, STAR_CHANNEL_DIRECTION_INOUT, channel, TRUE);
+	channel = select_channel(dev_id, channel);
 
+	printf("Setting link speed to %g Mbps\n", sig_rate);
+	CFG_setTxSignallingRate(dev_id, link_id, sig_rate, &sig_rate);
+	printf("Actual link speed is %g Mbps\n", sig_rate);
+
+	spw_chan_id = STAR_openChannelToLocalDevice(dev_id, STAR_CHANNEL_DIRECTION_INOUT, channel, TRUE);
 	if (!spw_chan_id) {
 		printf("Error opening channel\n");
 		exit(EXIT_FAILURE);
@@ -1495,9 +1417,7 @@ int main(int argc, char **argv)
 	 *  address path header, set via CLA
 	 *  for the brick, this contain an extra port slector, i.e. <port> <remote address>
 	 */
-
 	printf("Using path of %d nodes: ", path_len);
-
 	for(ret =0; ret < path_len; ret ++) {
 		printf(":%x", path[ret]);
 	}
@@ -1507,19 +1427,20 @@ int main(int argc, char **argv)
 
 
 	ret = pthread_create(&th_spw_poll, NULL, poll_spw, NULL);
-
 	if (ret) {
 		printf("Epic fail in pthread_create: %s\n", strerror(ret));
 		exit(EXIT_FAILURE);
 	}
 
 	/* make sure the link is running */
-    CFG_getPortStatusControl(dev_id, channel, &port_status);
+	CFG_getPortStatusControl(dev_id, channel, &port_status);
 	CFG_getSpaceWireLinkStatus(port_status, &link_status);
 	link_status.start = 1;
 	link_status.running = 1;
 	CFG_setSpaceWireLinkStatus(dev_id, channel, &link_status);
 
+	CFG_getRxSignallingRate(dev_id, link_id, &sig_rate);
+	printf("Measured RX link speed %g Mbps\n", sig_rate);
 
 	/**
 	 *  wait for signal, then clean up
@@ -1528,19 +1449,16 @@ int main(int argc, char **argv)
 	printf("Ready...\n");
 
 	pause();
-	
 
 	pthread_cancel(th_server);
 
-	if (th_server_poll) {
+	if (th_server_poll)
 		pthread_cancel(th_server_poll);
-	}
 
 	close(server_socket);
 
-	if (server_socket_connection) {
+	if (server_socket_connection)
 		close(server_socket_connection);
-	}
 
 
 	/* XXX */
@@ -1550,13 +1468,10 @@ int main(int argc, char **argv)
 
 	if (STAR_getTransferOperationStatus(pus_rx_transfer_op) != STAR_TRANSFER_STATUS_CANCELLED)
 		STAR_disposeTransferOperation(pus_tx_transfer_op);
-	
-	if (p_address) {
+
+	if (p_address)
 		STAR_destroyAddress(p_address);
-	}
 
-	if (spw_chan_id) {
+	if (spw_chan_id)
 		STAR_closeChannel(spw_chan_id);
-	}
-
 }
