@@ -24,6 +24,7 @@
  *  - maybe lots of others
  */
 
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,7 @@
 
 #include <rmap.h>
 #include <gresb.h>
-
+#include <udp.h>
 
 #include <signal.h>
 #include <sys/types.h>
@@ -75,6 +76,7 @@
 #define MTU		16384
 
 /* global fun! */
+enum {SERVER, CLIENT, DGRAM} mode;
 int server_socket, server_socket_connection;
 
 pthread_t th_spw_poll, th_server, th_rmap_server, th_server_poll, th_rmap_server_poll;
@@ -273,7 +275,6 @@ static int bind_server_socket(const char* url)
 
 	return sockfd;
 }
-
 
 /**
  * @brief bind a socket for a listening server
@@ -1005,24 +1006,31 @@ static void *poll_spw(__attribute__((unused)) void *arg)
 							       spw_recv_bytes - skip_header_bytes);
 
 
+		if (mode == DGRAM) {
+			if (enable_gresb) {
+				dgram_send_all(gresb_pkt, gresb_get_host_data_pkt_size(gresb_pkt));
+			} else {	  
+				dgram_send_all(spw_recv_buffer + skip_header_bytes,
+							   spw_recv_bytes - skip_header_bytes);
+			}
+		} else {
+			for (fd = 0; fd < nfds; fd++) {
+				if (!FD_ISSET(fd, &conn_set))
+					continue;
 
+				if (!enable_gresb) {
+					if (send_all(fd, spw_recv_buffer + skip_header_bytes,
+								 spw_recv_bytes  - skip_header_bytes) == -1) {
+						perror("send");
+						FD_CLR(fd, &conn_set);
+					}
 
-		for (fd = 0; fd < nfds; fd++) {
-			if (!FD_ISSET(fd, &conn_set))
-				continue;
+				} else {
+					if (send_all(fd, gresb_pkt, gresb_get_host_data_pkt_size(gresb_pkt)) == -1) {
+						perror("send");
+						FD_CLR(fd, &conn_set);
 
-			if (!enable_gresb) {
-				if (send_all(fd, spw_recv_buffer + skip_header_bytes,
-					     spw_recv_bytes  - skip_header_bytes) == -1) {
-					perror("send");
-					FD_CLR(fd, &conn_set);
-				}
-
-			} else {
-				if (send_all(fd, gresb_pkt, gresb_get_host_data_pkt_size(gresb_pkt)) == -1) {
-					perror("send");
-					FD_CLR(fd, &conn_set);
-
+					}
 				}
 			}
 		}
@@ -1162,7 +1170,7 @@ int main(int argc, char **argv)
 	PORT_STATUS_CONTROL port_status;
 	STAR_CFG_SPW_LINK_STATUS link_status;
 
-	enum {SERVER, CLIENT} mode;
+	
 
 
 	/**
@@ -1181,7 +1189,7 @@ int main(int argc, char **argv)
 	sig_rate = DEFAULT_LINK_SPEED;
 
 
-	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:PFGXR::h")) != -1) {
+	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:U:uPFGXR::h")) != -1) {
 		switch (opt) {
 		case 'i':
 			dev_num = strtol(optarg, NULL, 0);
@@ -1260,6 +1268,14 @@ int main(int argc, char **argv)
 		case 'L':
 			link_id = strtol(optarg, NULL, 0);
 			break;
+		case 'U':
+			mode = DGRAM;
+			strlcpy(url, optarg, sizeof(url));
+			dgram_add_client(sockaddr_from_url(url));
+			break;
+		case 'u':
+			mode = DGRAM;
+			break;
 		case 'P':
 			interpret_pus = 1;
 			break;
@@ -1293,6 +1309,8 @@ int main(int argc, char **argv)
 			printf("  -t timeout (µs)           throttle transmission of SpW packets by inserting a delay between packets (default %d)\n", pkt_throttle_usec);
 			printf("  -S LINKSPEED              link speed in Mbit/s (default %g)\n", DEFAULT_LINK_SPEED);
 			printf("  -L LINKID                 id of link to set speed/divider for; needed with Brick Mk2 port 2; (default link_id = channel). \n");
+			printf("  -u                        use UDP instead of TCP/IP\n");
+			printf("  -U ADDRESS:PORT           use UDP and add standard recipient\n");
 			printf("  -P                        parse network byte stream for PUS packets\n");
 			printf("  -F                        parse network byte stream for FEE data packets\n");
 			printf("  -R RMAP_PORT              exchange RMAP via RMAP_PORT\n");
@@ -1307,7 +1325,7 @@ int main(int argc, char **argv)
 
 
 
-    	/**
+	/**
 	 * set up network
 	 */
 
@@ -1335,7 +1353,7 @@ int main(int argc, char **argv)
 
 		printf("Started in SERVER mode\n");
 
-	} else {
+	} else if (mode == CLIENT){
 
 		server_socket_connection=connect_client_socket(url);
 
@@ -1350,6 +1368,13 @@ int main(int argc, char **argv)
 		}
 
 		printf("Started in CLIENT mode\n");
+	} else {
+		server_socket = dgram_bind_socket(port);
+
+		if ((ret = pthread_create(&th_server, NULL, dgram_poll_socket, &server_socket))) {
+			printf("Epic fail in pthread create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
 	}
 
 	if (enable_rmap) {
@@ -1440,6 +1465,7 @@ int main(int argc, char **argv)
 	CFG_setSpaceWireLinkStatus(dev_id, channel, &link_status);
 
 	CFG_getRxSignallingRate(dev_id, link_id, &sig_rate);
+		   
 	printf("Measured RX link speed %g Mbps\n", sig_rate);
 
 	/**
