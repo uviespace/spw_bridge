@@ -1270,8 +1270,13 @@ int main(int argc, char **argv)
 			break;
 		case 'U':
 			mode = DGRAM;
+
 			strlcpy(url, optarg, sizeof(url));
 			dgram_add_client(sockaddr_from_url(url));
+
+			/* yes, it's totally redundant... */
+			sprintf(host, "%s", strtok(optarg, ":"));
+			port = strtol(strtok(NULL, ":"), NULL, 0);
 			break;
 		case 'u':
 			mode = DGRAM;

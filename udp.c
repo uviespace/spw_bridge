@@ -24,8 +24,8 @@ struct dgram_clients {
 };
 
 static struct dgram_clients clients;
-static int sockfd;
 
+/* defined in spw_bridge.c */
 extern STAR_SPACEWIRE_ADDRESS *p_address;
 extern STAR_CHANNEL_ID spw_chan_id;
 extern int pkt_throttle_usec;
@@ -96,7 +96,8 @@ void dgram_add_client(struct sockaddr_in client)
 	}
 	
 	/* Otherwise add it */
-	memcpy(&clients.clients[++clients.length], &client, sizeof(struct sockaddr_in));
+	memcpy(&clients.clients[clients.length], &client, sizeof(struct sockaddr_in));
+	client.length++;
 }
 
 /**
@@ -104,7 +105,7 @@ void dgram_add_client(struct sockaddr_in client)
  */
 int dgram_bind_socket(int port)
 {
-	int sockfd, endpoint;
+	int endpoint;
 	struct sockaddr_in server;
 
 	sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -135,20 +136,43 @@ int dgram_bind_socket(int port)
  */
 void *dgram_poll_socket(void *arg)
 {
-	assert(arg != NULL);
-	sockfd = *(int*)arg;
 	struct sockaddr_in client;
 	ssize_t recv_len;
 	uint32_t client_len = sizeof(struct sockaddr_in);
+	int nfds = sockfd + 1;
+	fd_set read_set, conn_set;
+	struct timeval timeout;
 
-	/* This will block until something is received */
-	recv_len = recvfrom(sockfd, buf, BUFFER_SIZE, 0,
-						(struct sockaddr*)&client, &client_len);
+	FD_ZERO(&conn_set);
+	FD_SET(sockfd, &conn_set);
 
-	/* if client is new add it to the list of recepients */
-	dgram_add_client(client);
+	/* wait 10 ms in select() */
+	timeout.tv_sec  = 0;
+	timeout.tv_usec = 10000;
 
-	dgram_to_spw(buf, recv_len);
+	printf("Starting UDP packet polling\n");
+
+	while (1) {
+		read_set = conn_set;
+		
+		if (select(nfds, &read_set, NULL, NULL, &timeout) <= 0) {
+			usleep(1000);
+			continue;
+		}
+		
+		recv_len = recvfrom(sockfd, buf, BUFFER_SIZE, 0,
+							(struct sockaddr*)&client, &client_len);
+
+		printf("Received UPD packet with size %ld from client %s:%d\n",
+			   recv_len,
+			   inet_ntoa(client.sin_addr),
+			   ntohs(client.sin_port));
+
+		/* if client is new add it to the list of recepients */
+		dgram_add_client(client);
+
+		dgram_to_spw(buf, recv_len);
+	}
 	
 	return NULL;
 }
