@@ -15,6 +15,15 @@ client mode, connect to localhost:1234, same configuration otherwise:
 	./spw_bridge -c 1 -n 2:14 -L 2 -r localhost:1234
 
 
+udp mode, 
+
+	./spw_bridge -c 1 -u
+
+udp mode with standard client to send packets to on port 6000 and localhost
+
+	./spw_bridge -c 1 -U 0.0.0.0:6000
+
+
 USE in CHEOPS EGSE:
 ===================
 
