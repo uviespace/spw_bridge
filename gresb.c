@@ -32,8 +32,7 @@
  * @returns -1 on error
  */
 
-static int gresb_host_pkt_set_protocol(struct host_to_gresb_pkt *pkt,
-				       uint8_t protocol)
+static int gresb_host_pkt_set_protocol(struct host_to_gresb_pkt *pkt, uint8_t protocol)
 {
 
 	if (!pkt)
@@ -65,8 +64,7 @@ static int gresb_host_pkt_set_protocol(struct host_to_gresb_pkt *pkt,
  * @returns -1 on error
  */
 
-static int gresb_host_pkt_set_data_size(struct host_to_gresb_pkt *pkt,
-					uint32_t size)
+static int gresb_host_pkt_set_data_size(struct host_to_gresb_pkt *pkt, size_t size)
 {
 	if (!pkt)
 		return -1;
@@ -106,6 +104,7 @@ static size_t gresb_host_pkt_get_data_size(struct host_to_gresb_pkt *pkt)
 	return n;
 }
 
+
 /**
  * @brief get the data size of a packet
  *
@@ -125,6 +124,7 @@ static size_t gresb_pkt_get_data_size(struct gresb_to_host_pkt *pkt)
 	return n;
 }
 
+
 /**
  * @brief create a new host-to-gresb data packet
  *
@@ -134,7 +134,7 @@ static size_t gresb_pkt_get_data_size(struct gresb_to_host_pkt *pkt)
  * @returns the packet or NULL on error
  */
 
-uint8_t *gresb_create_host_data_pkt(const uint8_t *data, uint32_t len)
+uint8_t *gresb_create_host_data_pkt(const uint8_t *data, size_t len)
 {
 	struct host_to_gresb_pkt *pkt;
 
@@ -149,7 +149,7 @@ uint8_t *gresb_create_host_data_pkt(const uint8_t *data, uint32_t len)
 	if (data)
 		memcpy(pkt->data, data, len);
 
-	return (uint8_t *) pkt;
+	return (uint8_t *)pkt;
 }
 
 
@@ -176,7 +176,7 @@ size_t gresb_get_host_data_pkt_size(uint8_t *buf)
 		return 0;
 
 	n  = sizeof(struct host_to_gresb_pkt);
-	n += gresb_host_pkt_get_data_size((struct host_to_gresb_pkt *) buf);
+	n += gresb_host_pkt_get_data_size((struct host_to_gresb_pkt *)buf);
 
 	return n;
 }
@@ -195,7 +195,7 @@ const uint8_t *gresb_get_spw_data(const uint8_t *buf)
 	struct gresb_to_host_pkt *pkt;
 
 
-	pkt = (struct gresb_to_host_pkt *) buf;
+	pkt = (struct gresb_to_host_pkt *)buf;
 	if (!pkt)
 		return NULL;
 
@@ -216,7 +216,7 @@ size_t gresb_get_spw_data_size(uint8_t *buf)
 	if (!buf)
 		return 0;
 
-	return gresb_pkt_get_data_size((struct gresb_to_host_pkt *) buf);
+	return gresb_pkt_get_data_size((struct gresb_to_host_pkt *)buf);
 }
 
 
@@ -233,7 +233,7 @@ uint8_t gresb_get_spw_pkt_truncated(uint8_t *buf)
 	struct gresb_to_host_pkt *pkt;
 
 
-	pkt = (struct gresb_to_host_pkt *) buf;
+	pkt = (struct gresb_to_host_pkt *)buf;
 	if (!pkt)
 		return 0;
 
@@ -255,7 +255,7 @@ uint8_t gresb_get_spw_pkt_eeop(uint8_t *buf)
 	struct gresb_to_host_pkt *pkt;
 
 
-	pkt = (struct gresb_to_host_pkt *) buf;
+	pkt = (struct gresb_to_host_pkt *)buf;
 	if (!pkt)
 		return 0;
 
@@ -271,7 +271,7 @@ uint8_t gresb_get_spw_pkt_eeop(uint8_t *buf)
  * @returns the transmit network port or -1 on error
  */
 
-int gresb_get_virtual_link_tx_port(unsigned int link)
+int gresb_get_virtual_link_tx_port(uint32_t link)
 {
 	if (link > GRESB_VLINK_MAX)
 		return -1;
@@ -288,32 +288,10 @@ int gresb_get_virtual_link_tx_port(unsigned int link)
  * @returns the receive network port or -1 on error
  */
 
-int gresb_get_virtual_link_rx_port(unsigned int link)
+int gresb_get_virtual_link_rx_port(uint32_t link)
 {
 	if (link > GRESB_VLINK_MAX)
 		return -1;
 
-	return GRESB_VLINK_TX(link);
-}
-
-
-
-int test(void)
-{
-	size_t i;
-	uint8_t *pkt;
-	char *b;
-	uint8_t buf[] = {0xa, 2, 3, 4, 5, 6, 7};
-
-
-	pkt = gresb_create_host_data_pkt(buf, sizeof(buf));
-
-
-
-	b = (char *) gresb_get_spw_data(pkt);
-
-	for (i = 0; i < gresb_get_spw_data_size(pkt); i++)
-		printf("%x:", b[i]);
-
-	return 0;
+	return GRESB_VLINK_RX(link);
 }

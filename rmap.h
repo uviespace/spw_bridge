@@ -66,6 +66,13 @@
 
 
 /**
+ * the RMAP protocol identifier value, see ECSS‐E‐ST‐50‐52C 5.3.1.1
+ */
+
+#define RMAP_PROTOCOL_ID	0x01
+
+
+/**
  * RMAP minimum header sizes, see ECSS‐E‐ST‐50‐52C
  */
 
@@ -82,7 +89,7 @@
 
 /* RMAP header bytes in relative offsets following last entry in target path */
 #define RMAP_DEST_ADDRESS	0x00
-#define RMAP_PROTOCOL_ID	0x01
+#define RMAP_PROTOCOL_ID_OFFSET	0x01
 #define RMAP_INSTRUCTION	0x02
 #define RMAP_CMD_DESTKEY	0x03
 #define RMAP_REPLY_STATUS	RMAP_CMD_DESTKEY
@@ -103,7 +110,7 @@
 #define RMAP_ADDR_BYTE2		0x0a
 #define RMAP_ADDR_BYTE3		0x0b
 
-#define RMAP_ADDR_EXTRA_OFFSET	   4 
+#define RMAP_ADDR_EXTRA_OFFSET	   4
 /* RMAP header bytes in relative offsets (add extra 4 if address present)  */
 #define RMAP_DATALEN_BYTE0	0x08
 #define RMAP_DATALEN_BYTE1	0x09
@@ -153,10 +160,6 @@ struct rmap_instruction {
 #error "Unknown byte order"
 #endif
 }__attribute__((packed));
-#if 0
-compile_time_assert((sizeof(struct rmap_instruction) == sizeof(uint8_t),
-		    RMAP_INSTRUCTION_STRUCT_WRONG_SIZE));
-#endif
 
 
 /**
@@ -195,9 +198,9 @@ struct rmap_pkt {
 uint8_t rmap_crc8(const uint8_t *buf, const size_t len);
 
 struct rmap_pkt *rmap_create_packet(void);
-struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len);
+struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, size_t len);
 int rmap_build_hdr(struct rmap_pkt *pkt, uint8_t *hdr);
-int rmap_set_data_len(struct rmap_pkt *pkt, uint32_t len);
+int rmap_set_data_len(struct rmap_pkt *pkt, size_t len);
 void rmap_set_data_addr(struct rmap_pkt *pkt, uint32_t addr);
 int rmap_set_cmd(struct rmap_pkt *pkt, uint8_t cmd);
 
@@ -214,7 +217,7 @@ int rmap_set_dest_path(struct rmap_pkt *pkt, const uint8_t *path, uint8_t len);
 void rmap_erase_packet(struct rmap_pkt *pkt);
 
 
-void rmap_parse_pkt(uint8_t *pkt);
+void rmap_parse_pkt(uint8_t *pkt, size_t len);
 
 size_t rmap_get_non_rmap_pckt_cnt_err(void);
 void rmap_clear_non_rmap_pckt_cnt_err(void);

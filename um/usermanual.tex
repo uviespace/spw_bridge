@@ -1,0 +1,777 @@
+\title{User Manual}
+\def \documentid {SPW\_BRIDGE-UVIE-UM-001}
+\date{Issue 1.0, September 10, 2026}
+
+\newcommand\affil[1]{\textsuperscript#1}
+
+\def\preparedby {Armin Luntzer\affil{1}}
+\def\checkedby {Roland Ottensamer\affil{1}}
+\def\approvedby {Franz Kerschbaum\affil{1}}
+
+\def\affiliations{
+	\affil{1} Department of Astrophysics, University of Vienna
+}
+
+
+
+
+\input{shared/template/univie.tex}
+\input{shared/template/titlepage.tex}
+\input{shared/template/traceability.tex}
+\input{shared/glossary.tex}
+
+\usepackage{vhistory}
+
+\usepackage[giveninits=true]{biblatex}
+\addbibresource{shared/bibliography.bib}
+\nocite{ECSS5012C,ECSS5052C,ECSS7041C,ECSS7041A,CCSDS133,GRESBUM,GRMON2UM,MSSLIF109,GR712UM,GR740UM}
+
+\usepackage{listings}
+
+\lstdefinestyle{customc}{
+  belowcaptionskip=1\baselineskip,
+  breaklines=true,
+  xleftmargin=\parindent,
+  language=C,
+  showstringspaces=false,
+  basicstyle=\footnotesize\ttfamily,
+  keywordstyle=\bfseries\color{uvie-orangered!75},
+  commentstyle=\itshape\color{uvie-gray},
+  identifierstyle=\color{uvie-blue},
+  stringstyle=\color{uvie-goldenyellow},
+}
+
+\usepackage{appendix}
+
+\begin{document}
+\lstset{style=customc} 
+
+
+\setmainfont{MyriadPro-SemiCondensed}
+\uvietitlepage%
+{SPW\_bridge --\\ A SpaceWire to network bridge for ground support equipment}%
+{\doctitle}%
+{shared/images/logo2.pdf}%
+{}\setmainfont{MyriadPro}
+
+\approvalpage
+
+\tableofcontents
+\newpage
+
+
+
+\begin{versionhistory}
+  \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
+\end{versionhistory}
+
+
+\chapter{Introduction}
+
+\section{Purpose of the Document}
+
+This document gives an overview on how to build, configure and use the
+\gls{SpW} bridge software. An overview of the structure of the software will be
+given; detailed information relevant to system programming must however be
+looked up in the in-line documentation of the source files. The main text
+describes the generic bridging machinery that the software provides, the
+command-line interface, and the packet formats exchanged with a peer on the
+network side.
+
+\chapter{Applicable and Reference Documents}
+\label{cha:appdoc}
+
+\printbibliography[heading=none]
+
+
+\chapter{Terms, Definitions and Abbreviated Items}
+\printglossary[type=acronym]
+\printglossary[type=main, style=altlist]
+
+
+
+\chapter{Software Overview}
+
+\section{Function and Purpose}
+
+\texttt{spw\_bridge} is a software bridge between a \gls{SpaceWire} link and a
+network connection to a workstation. It operates a \gls{SpaceWire} interface
+device through the \gls{STAR} API and relays packets between the \gls{SpW}
+link and a \gls{TCP}/IP or \gls{UDP} endpoint, in either direction.
+\\
+
+On the \gls{SpW} side, the software uses the STAR API to select a device and
+channel, to set the link signalling rate and to submit and receive packets via
+the STAR transfer-operation machinery. On the network side, it provides a mult
+iple-connection server, a single-connection client, or a UDP endpoint. The
+bridge may optionally interpret the carried data stream: \gls{PUS} packets,
+\gls{FEE} data frames, GRESB protocol packets, and a pseudo-\gls{RMAP} command
+interface are supported and are described below.
+\\
+
+The intended use is ground support equipment, e.g. to operate the front-end
+electronics of an instrument through a \gls{SpaceWire}-to-Ethernet path from a
+workstation, or to debug a \gls{LEON3-FT}-based target such as a
+\gls{GR712RC} through the \gls{RMAP} protocol.
+
+\section{Build Requirements}
+
+In order to build \texttt{spw\_bridge}, make sure you have set up your
+environment so that the STAR API tools are available. The build currently
+links against the shared libraries
+
+\begin{lstlisting}[language=bash]
+  -lstar-api -lrmap_packet_library -lstar_conf_api_generic
+  -lstar_conf_api_mk2 -lstar_conf_api_brick_mk2
+  -lstar_conf_api_brick_mk3 -lstar_conf_api_pcie_mk2
+\end{lstlisting}
+
+\noindent
+together with \texttt{-lpthread}. The matching headers are found under
+\texttt{star-system/inc/star} and are provided by the STAR API installation.
+You will also need a \gls{GCC} compiler for your host platform, GNU make and a
+bash shell, i.e. what you would typically find in a Linux distribution with a
+basic set of development tools installed. If you want to generate source code
+documentation, you will also need to install \gls{Doxygen}.
+
+\noindent
+The \gls{STAR} API, the RMAP packet library and the device configuration
+libraries are supplied by STAR-Dundee Ltd.\ as part of the support software of
+their \gls{SpaceWire} devices; obtain them from STAR-Dundee if you are a
+customer who acquired one of their devices.
+
+\section{Build System}
+
+The build is driven by the plain Makefile in the source root. To build the
+binary, simply issue
+
+\begin{lstlisting}[language=bash]
+  $ make
+\end{lstlisting}
+
+\noindent
+on your shell prompt from the top-level \texttt{spw\_bridge} directory. The
+build produces an executable named \emph{spw\_bridge} in the current
+directory. To remove the build output, use
+
+\begin{lstlisting}[language=bash]
+  $ make clean
+\end{lstlisting}
+
+\noindent
+The optional \texttt{DEBUG} variable controls the verbosity of the debug
+output. By default it is set to 1, which disables the per-packet \texttt{DBG}
+traces. Setting \texttt{DEBUG} to 2 or higher enables them:
+
+\begin{lstlisting}[language=bash]
+  $ make DEBUG=2
+\end{lstlisting}
+
+\section{Source and Support Documentation}
+
+The source files carry Doxygen-style in-line documentation. The \gls{STAR} API
+header set and its reference documentation are kept below
+\texttt{star-system/}, with the generated \gls{Doxygen} HTML under
+\texttt{star-system/doc}. The reference standards drawn upon by the packet
+handling code are listed in Chapter~\ref{cha:appdoc}.
+
+\section{Current Platform Configuration}
+
+The bridge is a host-side application and runs on a Linux workstation. The
+\gls{STAR} device selected by default is device number 0; the device
+enumeration performed at startup lists the detected devices and their names.
+A channel number between 0 and 31 may be selected; the default channel is 1.
+The link signalling rate is set to 10\,Mbit/s by default and may be configured
+between 2 and 400\,Mbit/s. Channels, link identifiers and routing paths are
+under configuration control through the command-line options described in
+Chapter~\ref{cha:usage}.
+
+\section{Features Overview}
+
+The following gives a concise overview of the currently implemented features:
+
+\begin{itemize}
+
+\item Network transport over a single TCP connection (server or client mode)
+or over UDP datagrams.\\
+
+\item Interpretation of the network byte stream into \gls{PUS} packets
+(ECSS-E-ST-70-41C) with sequence counting and CRC16 verification in both
+directions.\\
+
+\item Decoded printing of \gls{CCSDS} and PUS-C header fields, the per-packet
+CRC16 status and the payloads for debugging.\\
+
+\item Interpretation of FEE data frames (with the FEE framing of
+\gls{MSSL} Draft A.14).\\
+
+\item Support for the GRESB protocol, intended for use with the grmon debug
+monitor for \gls{RMAP} access to a target.\\
+
+\item A pseudo-\gls{RMAP} command service on a dedicated TCP port for
+lossless read and write access to the \gls{SpW} network.\\
+
+\item Optional stripping of a fixed number of leading bytes of incoming
+\gls{SpW} packets (e.g. a path header added by the network).\\
+
+\item Optional throttling of \gls{SpW} packet submission by an inserted delay
+between packets.\\
+
+\item Optional device reset on startup.\\
+
+\end{itemize}
+
+
+\chapter{Structure and Concept}
+
+\section{Source Code Organisation}
+
+The bridge consists of a small set of dedicated source files:
+
+\begin{tabu} to \linewidth {@{}ll@{}}
+	\texttt{spw\_bridge.c}	& main program: option processing, startup and shutdown \\
+	\texttt{spw\_bridge.h}	& shared configuration and subsystem interfaces \\
+	\texttt{net.c}		& network subsystem: sockets, framing, packet sink \\
+	\texttt{spw.c}		& SpaceWire subsystem: STAR API device and link handling \\
+	\texttt{kbd.c}, \texttt{kbd.h}& keyboard monitor: toggles the PUS debug printout \\
+	\texttt{rmap.c}, \texttt{rmap.h}& RMAP command and reply helper functions \\
+	\texttt{gresb.c}, \texttt{gresb.h}& GRESB protocol packet helpers \\
+	\texttt{byteorder.h}	& endianness conversion macros \\
+	\texttt{debug.h}		& debug output control \\
+	\texttt{ecss/}		& \gls{CCSDS}, \gls{ECSS} (\gls{PUS}) and \gls{CRC} packet library \\
+\end{tabu}
+
+\noindent
+The two subsystems talk to each other through the \texttt{bridge\_cfg}
+structure: the network code installs a packet sink callback
+(\texttt{cfg->pkt\_sink = net\_pkt\_sink}) that the \gls{SpW} receive loop
+invokes for every complete packet received on the link.
+
+\section{Network Subsystem}
+\label{sec:net}
+
+The network subsystem maintains a per-service fds set and multiplexes its
+connections with \texttt{select()}. Two services exist: the \emph{data}
+service carries the forwarded \gls{SpW} packets, and the \emph{rmap} service
+implements the pseudo-\gls{RMAP} interface (see Section~\ref{sec:rmapif}).
+Each service has its own accept and poll thread; the RMAP service is always
+started as a listening server, even when the data path runs in client mode.
+A peer that stays silent for more than 30 seconds is dropped.
+\\
+
+Depending on the selected mode, a received network byte stream is framed as
+follows:
+
+\begin{itemize}
+
+\item \emph{raw}: one \texttt{recv()} call defines one \gls{SpW} packet. Note
+that back-to-back packets sent on a stream socket may be merged into a single
+receive, and a partially delivered packet may be split, so a higher-level
+framing protocol is normally required for reliable transport.\\
+
+\item \emph{PUS} (\texttt{-P}): a six-byte CCSDS primary header is read
+first; the packet length field plus one octet plus the six-byte header
+defines the packet boundary. The sequence counter in bytes 2 and 3 is checked
+against the running sequence in both directions and mismatches are reported
+on {\ttfamily stderr}.\\
+
+\item \emph{FEE} (\texttt{-F}): a ten-byte FEE data header is expected; if
+its protocol identifier is \texttt{0xF0}, the big-endian data length field
+plus the header defines the packet boundary. A different protocol identifier
+defers to raw framing.\\
+
+\item \emph{GRESB} (\texttt{-G}): a four-byte host-to-GRESB header (protocol
+byte plus three-byte big-endian size) defines the packet boundary.\\
+
+\end{itemize}
+
+In the other direction, every packet received on the \gls{SpW} link is passed
+to \texttt{net\_pkt\_sink}, which forwards it to all connected data clients.
+In GRESB mode the \gls{SpW} packet is wrapped into a host-to-GRESB data packet
+before transmission.
+
+\section{SpaceWire Subsystem}
+
+The \gls{SpW} subsystem selects the STAR device and channel, optionally resets
+the device, sets the link signalling rate through
+\texttt{CFG\_setTransmitSignallingRate}, opens the channel and creates the
+routing path with \texttt{STAR\_createAddress}. The link is then forced into
+the running state and the measured receive rate is reported.
+\\
+
+A dedicated polling thread is started which repeatedly submits a single receive
+transfer operation (\texttt{STAR\_createRxOperation} with \texttt{EOP}
+terminated packets) and waits for its completion. On completion the received
+packet is handed to the network sink. Transmission uses
+\texttt{STAR\_createPacket} plus a transmit transfer operation, with an
+optional throttle delay after each packet. Reads and writes of registers on
+remote targets are implemented with the STAR RMAP packet library, see below.
+
+\section{RMAP Helper Functions}
+
+The RMAP helper sources provide verification, CRC-8 computation, and parsing
+of RMAP packets, including a table of the command codes and status codes of
+\gls{ECSS} ECSS-E-ST-50-52C. The bridge uses these helpers to parse RMAP
+packets for logging and to decode replies received from targets on the
+\gls{SpW} link.
+
+\section{GRESB Support}
+
+The GRESB is a \gls{SpaceWire}-to-Ethernet bridge intended for ground
+equipment (see the \gls{GRESB} glossary entry and
+\cite{GRESBUM}). The bridge implements its host protocol: a data transfer
+consists of a one-byte protocol identifier followed by a three-byte big-endian
+size field and the raw \gls{SpW} data. The reverse direction carries a header
+with reserved, truncated and \gls{EOP}-error bits followed by the three-byte
+size and the data.
+\\
+
+The GRESB uses a base port number of 3000 with two ports per virtual link:
+the even port is the transmit port and the odd port is the receive port. Up
+to five virtual links are supported. This mode is intended to be used with
+the grmon debug monitor for \gls{RMAP} access (see
+Section~\ref{sec:gresb}).
+
+\section{ECSS Packet Library}
+
+The \texttt{ecss/} directory contains a self-contained packet library that
+follows the CCSDS Space Packet Protocol \cite{CCSDS133} and the \gls{PUS}
+\cite{ECSS7041C}:
+
+\begin{itemize}
+
+\item \texttt{ccsds\_pkt.c/h} -- field accessors and setters for the
+six-byte CCSDS primary header (version, type, secondary header flag, APID,
+sequence flags and count, data length).\\
+
+\item \texttt{ecss\_pkt.c/h} -- PUS-A and PUS-C secondary header handling,
+verification support, source and destination identifiers, timestamps, and a
+service/sub-service model. The active PUS version is configured in
+\texttt{ecss\_pkt\_cfg.h}.\\
+
+\item \texttt{ecss\_pkt\_cfg.h} -- configuration and service type /
+sub-service definitions (ST\_VER, ST\_HK, ST\_EVT, ST\_Mem, ST\_Time, and so
+on). The current configuration tracks PUS-C as the baseline and defines a
+maximum packet size of 4096 bytes.\\
+
+\item \texttt{crc16.c/h} -- CRC16-CCITT-FALSE with a slice-by-8 lookup table
+and a benchmark suite.\\
+
+\item \texttt{bitman.c/h} -- bit-level field extraction used by the packet
+library.\\
+
+\end{itemize}
+
+\noindent
+The \texttt{pus\_debug\_print()} function uses this library to print decoded
+CCSDS and PUS-C headers and payloads for both directions when enabled with
+\texttt{-D} and \texttt{-P}. The CRC16 check on the data path is performed
+with \texttt{crc16\_buf()} from the same library (see
+Section~\ref{sec:puscrc}).
+
+\section{Block Diagram}
+
+Figure~\ref{fig:block} shows the connectivity design of the bridge. Ground
+support equipment, a grmon debug monitor or a \gls{GRESB} device exchange data
+with the bridge over Ethernet (\gls{TCP}/IP or \gls{UDP}). The network side of
+the bridge frames the received byte streams according to the selected packet
+mode, the relaying core hands the packets to the \gls{SpW} side, which submits
+them through a \gls{STAR} API device onto the \gls{SpaceWire} link, and the
+same path is used in reverse for packets received from the link.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.9\textwidth}{!}{%
+\begin{tikzpicture}[
+	box/.style = {draw, rectangle, rounded corners = 2pt, fill = uvie-gray!25,
+		      text width = 2.2cm, align = center, inner sep = 3pt},
+	frame/.style = {draw, rectangle, rounded corners = 2pt, dashed,
+			text width = 9.6cm, minimum height = 1.8cm, align = center}
+]
+	\node[frame] (bridge) at (8.2, 0) {};
+
+	\node[box] (peers)  at (0, 0) {ground support equipment,\\ grmon};
+	\node[box] (net)    at (4.4, 0) {net side\\ TCP/UDP\\ packet framing};
+	\node[box] (core)   at (8.2, 0) {packet\\ relaying};
+	\node[box] (spw)    at (12.0, 0) {SpW side\\ STAR API\\ device};
+	\node[box] (target) at (16.2, 0) {SpW target\\ LEON3-FT,\\ GR712RC};
+
+	\draw[->] (peers.east) -- (net.west);
+	\draw[->] (net.east) -- (core.west);
+	\draw[->] (core.east) -- (spw.west);
+	\draw[->] (spw.east) -- (target.west);
+
+	\node at (2.2, 0.45) {\scriptsize Ethernet};
+	\node at (14.1, 0.45) {\scriptsize SpaceWire};
+
+	\node at (8.2, -1.45) {\texttt{spw\_bridge}};
+\end{tikzpicture}}
+\caption{Block diagram of the \texttt{spw\_bridge} connectivity}
+\label{fig:block}
+\end{figure}
+
+\section{Data Flow}
+
+In the \emph{network to SpaceWire} direction, a poll thread waits for data on
+the data service, frames it according to the selected mode, logs it, and hands
+it to \texttt{spw\_send\_packet} which transmits it on the \gls{SpW} link (see
+Figure~\ref{fig:block}). The
+rmap service instead parses a pseudo-\gls{RMAP} command header (see
+Section~\ref{sec:rmapif}) and issues the corresponding read or write command.
+\\
+
+In the \emph{SpaceWire to network} direction, the \gls{SpW} polling thread
+receives a packet and calls \texttt{net\_pkt\_sink}. Depending on the
+configuration, the packet is logged, its PUS sequence is checked, and any
+RMAP replies (identified by the RMAP protocol identifier byte after the
+skipped header) are forwarded to the RMAP service clients. The data is then
+forwarded to the data service clients, optionally wrapped in a GRESB packet.
+
+
+\chapter{Using the Bridge}
+\label{cha:usage}
+
+\section{Synopsis}
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge [OPTIONS]
+\end{lstlisting}
+
+\noindent
+The bridge runs until it is interrupted; \texttt{SIGINT}, \texttt{SIGTERM}
+and \texttt{SIGHUP} terminate the program and shut down the device cleanly.
+The full option set is:
+
+\begin{tabu} to \linewidth {@{}ll@{}}
+	\texttt{-i DEVNUM}	& \gls{SpW} device id to use (default 0) \\
+	\texttt{-c CHANNEL}	& \gls{SpW} channel to use (default 1) \\
+	\texttt{-n PATH}	& routing path, colon-separated hex bytes, one byte per node \\
+	\texttt{-p PORT}	& local data port number (default 1234) \\
+	\texttt{-s ADDRESS}	& local source address (default 0.0.0.0) \\
+	\texttt{-r HOST:PORT}& client mode: address and port of the remote target \\
+	\texttt{-u}		& use UDP instead of TCP \\
+	\texttt{-d NUM}		& number of header bytes to drop from incoming \gls{SpW} packets (default 0) \\
+	\texttt{-t USEC}	& throttle: delay in microseconds inserted before each \gls{SpW} packet (default 0) \\
+	\texttt{-S MBPS}	& link speed in Mbit/s (default 10, valid range 2--400) \\
+	\texttt{-L LINKID}	& id of the link whose speed is set (default: equal to the channel) \\
+	\texttt{-P}		& parse the network byte stream for \gls{PUS} packets \\
+	\texttt{-D}		& print decoded PUS-C headers and payloads (requires \texttt{-P}) \\
+	\texttt{-C}		& disable the PUS CRC16 check (see Section~\ref{sec:puscrc}) \\
+	\texttt{-F}		& parse the network byte stream for FEE data packets \\
+	\texttt{-R [PORT]}	& enable the pseudo--\gls{RMAP} service on PORT (default 2345) \\
+	\texttt{-G}		& use the GRESB protocol for the network exchange \\
+	\texttt{-X}		& perform a device reset before opening the channel \\
+	\texttt{-h}, \texttt{--help}& print the usage message and exit \\
+\end{tabu}
+
+\noindent
+A routing path given with \texttt{-n} is a colon-separated list of hex byte
+values, one per node (e.g. \texttt{-n 01:24:00:00:00}); up to 256 nodes are
+accepted and out-of-range values are truncated to 8 bits.
+
+\section{Operating Modes}
+
+The bridge supports three modes of operation:
+
+\begin{itemize}
+
+\item \emph{server mode} (default): the bridge listens on the configured
+address and port for an arbitrary number of TCP connections. Every connected
+peer receives the \gls{SpW} traffic, and data from any peer is transmitted on
+the \gls{SpW} link.\\
+
+\item \emph{client mode} (\texttt{-r}): the bridge connects to the specified
+\texttt{HOST:PORT} and operates a single connection. If the link is lost,
+the bridge terminates.\\
+
+\item \emph{UDP mode} (\texttt{-u}): the bridge binds a UDP socket and sends
+one datagram per \gls{SpW} packet. Peers are registered as they are seen,
+i.e. the first datagram from a host registers it as a recipient.\\
+
+\end{itemize}
+
+\section{SpaceWire Configuration}
+
+At startup the bridge lists the detected \gls{STAR} devices and their names.
+The device is selected with \texttt{-i} (default 0). The channel is selected
+with \texttt{-c}; a non-existent channel is rejected and the available
+channels are printed. The link signalling rate is set with \texttt{-S} to a
+value between 2 and 400\,Mbit/s; the actual, measured receive rate is
+reported during link start. \texttt{-L} selects the link whose speed is set;
+on the Brick MK~II the transmit signalling rate of the second port is
+configured in this way. \texttt{-X} resets the device before the channel is
+opened; note that this affects other ports of the device as well.
+
+\section{Interpreting the Network Stream}
+
+By default the network byte stream is forwarded without framing (raw mode);
+please note the packet merging and splitting caveat described in
+Section~\ref{sec:net}. For reliable transport of packet-oriented traffic,
+use one of the packet modes:
+
+\begin{itemize}
+
+\item \texttt{-P} frames the stream as \gls{PUS} packets, checks the CCSDS
+sequence counter in both directions and verifies the PUS CRC16 (see
+Section~\ref{sec:puscrc}). Sequence mismatches are reported to
+{\ttfamily stderr}, together with the expected and received counter
+values.\\
+
+\item \texttt{-F} frames the stream as FEE data packets (protocol identifier
+\texttt{0xF0}). All other packets fall back to raw framing.\\
+
+\item \texttt{-G} frames the stream as GRESB protocol packets (see
+Section~\ref{sec:gresb}).\\
+
+\end{itemize}
+
+\noindent
+\texttt{-D} additionally prints a decoded CCSDS and PUS-C header and payload
+dump of every packet passing through the bridge, in both directions. It
+requires \texttt{-P}; once enabled, the printout can also be switched on and
+off from the keyboard while the bridge is running (see
+Section~\ref{sec:kbd}).
+
+\section{Keyboard Control of the Debug Printout}
+\label{sec:kbd}
+
+When \texttt{-D} is active, the decoded debug printout can be toggled from the
+terminal while the bridge is running: pressing \texttt{d} or \texttt{D} turns
+it on or off, and each change is announced on the terminal with a
+{\ttfamily PUS debug enabled} or {\ttfamily PUS debug disabled} message. This
+allows a quick look at the PUS traffic without restarting the bridge or
+resubmitting the command line. The keyboard control is handled by a dedicated
+monitor thread and requires \texttt{stdin} to be connected to a terminal; if
+the bridge runs in the background or with redirected input, the toggle is not
+available.
+
+\section{Reading the PUS Debug Printout}
+\label{sec:pusdbg}
+
+With \texttt{-D} and \texttt{-P}, every packet is preceded by a time stamp and
+the direction of travel, followed by a decoded CCSDS and PUS-C header dump and
+a hex dump of the payload. An example for a telecommand (TC) with the debug
+output enabled is
+
+\begin{lstlisting}
+[2026-09-10 10:20:30.512] NET->SPW
+  CCSDS: type=TC APID=0x101 seq_flags=3 seq_count=42 data_len=35
+  PUS-C: ST=5 SST=1 source_id=0x0000 ACK=0b0110
+  CRC=OK
+  payload (30 bytes):
+  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+  10 11 12 13 14 15 16 17 18 19
+\end{lstlisting}
+
+\noindent
+and for the corresponding telemetry (TM) return traffic
+
+\begin{lstlisting}
+[2026-09-10 10:20:31.048] SPW->NET
+  CCSDS: type=TM APID=0x088 seq_flags=3 seq_count=7 data_len=31
+  PUS-C: ST=1 SST=33 MTC=4 DEST_ID=0x0005 T_REF_STS=0010 TS=5c:00:12:34:00:42
+  CRC=OK
+  payload (18 bytes):
+  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+  10 11
+\end{lstlisting}
+
+\noindent
+The printed fields are
+
+\begin{tabu} to \linewidth {@{}ll@{}}
+	\texttt{APID}		& application process identifier of the CCSDS primary header \\
+	\texttt{type}		& \texttt{TM} or \texttt{TC} \\
+	\texttt{seq\_flags}, \texttt{seq\_count} & CCSDS sequence flags and sequence count (decimal) \\
+	\texttt{data\_len}	& CCSDS data length in octets \\
+	\texttt{ST}, \texttt{SST}& PUS service type and subservice type \\
+	\texttt{source\_id}	& TC source identifier \\
+	\texttt{ACK}		& TC acknowledgement flags, printed as four bits \\
+	\texttt{MTC}		& TM message type counter \\
+	\texttt{DEST\_ID}	& TM destination identifier \\
+	\texttt{T\_REF\_STS}	& TM time reference status, printed as four bits \\
+	\texttt{TS}		& TM time, six-octet PUS-C time of day \\
+	\texttt{CRC}		& result of the CRC16 check (\texttt{OK} or \texttt{NOK}, see Section~\ref{sec:puscrc}) \\
+\end{tabu}
+
+\noindent
+The payload is dumped as hex octets, sixteen per line, with an empty line
+closing the dump. A payload that ends with a partial line is terminated
+properly, so every packet dump is followed by a blank line.
+
+\section{The PUS CRC16 Check}
+\label{sec:puscrc}
+
+Every \gls{PUS} packet carries a CRC16 field, as mandated by
+\gls{ECSS}-E-ST-70-41C. With \texttt{-P}, the bridge verifies this field on
+every packet in both directions and reports a failed check on
+{\ttfamily stderr}. The result is also printed in the debug dump as a
+\texttt{CRC=OK} or \texttt{CRC=NOK} line directly before the payload. The
+bridge never drops a packet with a failed check, it only reports it; it is a
+mediator on the data path. \texttt{-C} disables the check, which also
+suppresses the corresponding printout line. Disable it only when a
+mission-specific tailoring of the stream omits the CRC16 field.
+
+\section{The Pseudo-RMAP Interface}
+\label{sec:rmapif}
+
+With \texttt{-R} (optionally followed by a port number, default 2345) the
+bridge starts a second TCP server that implements a simplified \gls{RMAP}
+command interface. Each command has the form
+
+\begin{lstlisting}[language=bash]
+  <spw addr><op>:<addr>:<size>:<data>
+\end{lstlisting}
+
+\noindent
+encoded as a ten-byte header, followed by the write payload for write
+operations:
+
+\begin{tabu} to \linewidth {@{}ll@{}}
+	byte 0		& target \gls{SpW} logical address \\
+	byte 1		& operation: 0 = read, non-zero = write \\
+	bytes 2--5	& 32-bit starting address, big-endian \\
+	bytes 6--9	& data size, big-endian \\
+	bytes 10...	& write payload (write operations only) \\
+\end{tabu}
+
+\noindent
+A read command issues a read of 5 bytes at the given address; the size field
+is currently ignored for reads. A write command writes the given payload with
+address increment. The RMAP commands are assembled with the STAR RMAP packet
+library, using a source logical address of \texttt{0x30} and the command key
+\texttt{0xab} without an extended address. The RMAP replies produced by a
+target (returned to \texttt{0x30}) are detected on the \gls{SpW} link by their
+RMAP protocol identifier and forwarded to the connected RMAP clients in the
+same ten-byte-plus-data format.
+\\
+
+For example, using netcat, a read of 5 bytes at address \texttt{0x1000} of a
+target with logical address \texttt{0xfe} is issued with
+
+\begin{lstlisting}[language=bash]
+  $ printf '\xfe\x00\x00\x00\x10\x00\x00\x00\x00\x00' |
+      nc localhost 2345
+\end{lstlisting}
+
+\noindent
+and a two-byte write of \texttt{0xde 0xad} to the same address with
+
+\begin{lstlisting}[language=bash]
+  $ printf '\xfe\x01\x00\x00\x10\x00\x00\x00\x00\x02\xde\xad' |
+      nc localhost 2345
+\end{lstlisting}
+
+\section{Examples}
+
+\subsection{Server Mode with a PCIe Card}
+
+Transmit and receive on channel 2 of the first detected device:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 2
+\end{lstlisting}
+
+\subsection{Brick MK II Configuration}
+
+The Brick MK~II channel is always 1. Configure the signalling rate of link 2
+and send packets via the route with id 2 to the remote \gls{SpW} device with
+node address \texttt{0x14}:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 1 -n 2:14 -L 2
+\end{lstlisting}
+
+\noindent
+The same configuration in client mode, connecting to
+\texttt{localhost:1234}:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 1 -n 2:14 -L 2 -r localhost:1234
+\end{lstlisting}
+
+\subsection{Use in the CHEOPS EGSE}
+
+With the real data processing unit (DPU) connected to the \gls{EGSE} Brick,
+use link 1 of the Brick as follows:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 1 -n 01:24:00:00:00 -d 4 -L 1 -p 5573 -P
+\end{lstlisting}
+
+\noindent
+and link 2 of the Brick accordingly:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 1 -n 02:24:00:00:00 -d 4 -L 2 -p 5573 -P
+\end{lstlisting}
+
+\noindent
+The first byte of the route is consumed by the Brick as the link number, the
+next byte is the address of the DPU (\texttt{0x24}) and the remaining three
+bytes are consumed by the DPU. The \texttt{-d 4} option drops the four-byte
+\gls{SpW} address header that the real DPU attaches to its packets. Traffic is
+sent to local port 5573 in \gls{PUS} framing mode.
+
+\subsection{Use in the ARIEL Mission}
+
+For the ARIEL mission, using a PCIe MK~II card, the bridge is typically
+started as follows:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -i0 -P -n52:02:00:00 -p5573 -S60 -d4 -c3
+\end{lstlisting}
+
+\noindent
+This selects device number 0 (\texttt{-i 0}), parses the network byte stream
+as \gls{PUS} packets (\texttt{-P}), uses the routing path \texttt{52:02:00:00}
+(\texttt{-n}), listens on local port 5573 (\texttt{-p 5573}), sets the link
+signalling rate to 60\,Mbit/s (\texttt{-S 60}), drops the four-byte header of
+incoming \gls{SpW} packets (\texttt{-d 4}) and opens \gls{SpW} channel 3
+(\texttt{-c 3}). The channel flag selects the physical \gls{SpW} port of the
+card and may need adjustment depending on which port is wired to the target.
+
+\subsection{GRESB Protocol with grmon}
+\label{sec:gresb}
+
+For \gls{RMAP} access through the grmon debug monitor, connect the target
+\gls{SpW} link to a \gls{SpW} port of the used device that supports \gls{RMAP}
+(on the \gls{GR712RC} only link 0 or link 1 support \gls{RMAP}). Start the
+bridge with the GRESB option and set the link speed to 10\,Mbit/s:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 1 -S 10 -G
+\end{lstlisting}
+
+\noindent
+The GRESB uses a base port number of 3000 with two ports per virtual link
+(the even port for transmit, the odd port for receive). Verify that these
+ports are forwarded to the data port of the bridge, e.g. with socat:
+
+\begin{lstlisting}[language=bash]
+  $ socat tcp-l:3000,fork,reuseaddr tcp:127.0.0.1:1234
+  $ socat tcp-l:3001,fork,reuseaddr tcp:127.0.0.1:1234
+\end{lstlisting}
+
+\noindent
+You may now start grmon against the machine that runs the bridge:
+
+\begin{lstlisting}[language=bash]
+  $ grmon -gresb 127.0.0.1
+\end{lstlisting}
+
+\noindent
+There is a caveat: the GRSPW2 \gls{SpW} port of the target may not be
+initialised if no boot ROM is present. For the \gls{GR712RC} you have to
+connect through the JTAG or another debug interface first and initialise the
+core, e.g. GRSPW0:
+
+\begin{lstlisting}[language=bash]
+  grmon> wmem 0x80100800 0xA0010006
+  grmon> wmem 0x8010080C 0x00000909
+\end{lstlisting}
+
+\noindent
+For details refer to the GRMON2 manual \cite{GRMON2UM}.
+
+\end{document}

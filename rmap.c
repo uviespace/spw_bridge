@@ -1,6 +1,6 @@
 /**
  * @file   rmap.c
- * @author Armin Luntzer (armin.luntzer@univie.ac.at),
+ * @author Armin Luntzer (armin.luntzer@univie.ac.at)
  * @date   2018
  *
  * @copyright GPLv2
@@ -19,24 +19,14 @@
  */
 
 
-
 #include <string.h>
 #include <stdlib.h>
 #include <debug.h>
 
 #include <rmap.h>
 
-/* XXX an error statistic for non-rmap packets received */
+/* error statistic for non-rmap packets received */
 static size_t non_rmap_pkt_err_cnt;
-
-size_t rmap_get_non_rmap_pckt_cnt_err(void)
-{
-	return non_rmap_pkt_err_cnt;
-}
-void rmap_clear_non_rmap_pckt_cnt_err(void)
-{
-	non_rmap_pkt_err_cnt = 0;
-}
 
 
 /**
@@ -109,6 +99,230 @@ static int rmap_get_min_hdr_size(struct rmap_pkt *pkt)
 	}
 }
 
+
+/**** UNFINISHED INFO STUFF BELOW ******/
+
+__extension__
+static int rmap_check_status(uint8_t status)
+{
+
+
+	DBG("\tStatus: ");
+
+	switch (status) {
+	case RMAP_STATUS_SUCCESS:
+		DBG("Command executed successfully");
+		break;
+	case RMAP_STATUS_GENERAL_ERROR:
+		DBG("General error code");
+		break;
+	case RMAP_STATUS_UNUSED_TYPE_OR_CODE:
+		DBG("Unused RMAP Packet Type or Command Code");
+		break;
+	case RMAP_STATUS_INVALID_KEY:
+		DBG("Invalid key");
+		break;
+	case RMAP_STATUS_INVALID_DATA_CRC:
+		DBG("Invalid Data CRC");
+		break;
+	case RMAP_STATUS_EARLY_EOP:
+		DBG("Early EOP");
+		break;
+	case RMAP_STATUS_TOO_MUCH_DATA:
+		DBG("Too much data");
+		break;
+	case RMAP_STATUS_EEP:
+		DBG("EEP");
+		break;
+	case RMAP_STATUS_RESERVED:
+		DBG("Reserved");
+		break;
+	case RMAP_STATUS_VERIFY_BUFFER_OVERRRUN:
+		DBG("Verify buffer overrrun");
+		break;
+	case RMAP_STATUS_CMD_NOT_IMPL_OR_AUTH:
+		DBG("RMAP Command not implemented or not authorised");
+		break;
+	case RMAP_STATUS_RMW_DATA_LEN_ERROR:
+		DBG("RMW Data Length error");
+		break;
+	case RMAP_STATUS_INVALID_TARGET_LOGICAL_ADDR:
+		DBG("Invalid Target Logical Address");
+		break;
+	default:
+		DBG("Reserved unused error code %d", status);
+		break;
+	}
+
+	DBG("\n");
+
+
+	return status;
+}
+
+
+static void rmap_process_write_cmd(uint8_t *pkt, size_t len)
+{
+	uint32_t i;
+
+	uint32_t addr  = 0;
+
+	uint32_t data_len = 0;
+
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE0]) << 24;
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE1]) << 16;
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE2]) <<  8;
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE3]) <<  0;
+
+
+	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE0 + 4]) << 16;
+	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE1 + 4]) <<  8;
+	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE2 + 4]) <<  0;
+
+	DBG("CMD WR to %08x size %d bytes: ", addr, data_len);
+
+	if (data_len > len - RMAP_DATA_START - RMAP_ADDR_EXTRA_OFFSET)
+		data_len = (uint32_t)(len - RMAP_DATA_START - RMAP_ADDR_EXTRA_OFFSET);
+
+	for (i = 0; i < data_len; i++)
+		DBG("%02x:", pkt[RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET + i]);
+
+	DBG("\b \n");
+}
+
+
+static void rmap_process_read_cmd(uint8_t *pkt)
+{
+	uint32_t len = 0;
+	uint32_t addr  = 0;
+
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE0]) << 24;
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE1]) << 16;
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE2]) <<  8;
+	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE3]) <<  0;
+
+
+	len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE0 + 4]) << 16;
+	len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE1 + 4]) <<  8;
+	len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE2 + 4]) <<  0;
+
+	DBG("CMD RD from %08x size %d bytes\n", addr, len);
+
+}
+
+
+static void rmap_process_read_reply(uint8_t *pkt, size_t len)
+{
+	uint32_t i;
+
+	uint32_t data_len = 0;
+
+
+	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE0]) << 16;
+	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE1]) <<  8;
+	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE2]) <<  0;
+
+
+	DBG("RD reply size %d bytes: ", data_len);
+
+	if (data_len > len - RMAP_DATA_START)
+		data_len = (uint32_t)(len - RMAP_DATA_START);
+
+	for (i = 0; i < data_len; i++)
+		DBG("%02x:", pkt[RMAP_DATA_START + i]);
+
+	DBG("\b \n");
+}
+
+
+static void rmap_parse_cmd_pkt(uint8_t *pkt, size_t len)
+{
+	struct rmap_instruction *ri;
+
+
+	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
+
+
+	switch (ri->cmd) {
+
+	case RMAP_READ_ADDR_SINGLE:
+		DBG("Read single address\n");
+		rmap_process_read_cmd(pkt);
+		break;
+	case RMAP_READ_ADDR_INC:
+		DBG("Read incrementing address\n");
+		rmap_process_read_cmd(pkt);
+		break;
+	case RMAP_READ_MODIFY_WRITE_ADDR_INC:
+		rmap_process_write_cmd(pkt, len);
+		DBG("RMW incrementing address verify reply\n");
+		break;
+	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
+		rmap_process_write_cmd(pkt, len);
+		DBG("Write incrementing address verify reply\n");
+		break;
+	case RMAP_WRITE_ADDR_INC_REPLY:
+		rmap_process_write_cmd(pkt, len);
+		DBG("Write incrementing address reply\n");
+		break;
+	default:
+		DBG("decoding of instruction 0x%02X not implemented\n",
+		       ri->cmd);
+		rmap_process_write_cmd(pkt, len);
+		break;
+	}
+
+}
+
+
+static void rmap_parse_reply_pkt(uint8_t *pkt, size_t len)
+{
+	struct rmap_instruction *ri;
+
+
+	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
+
+	DBG("\tInstruction: ");
+
+	switch (ri->cmd) {
+
+	case RMAP_READ_ADDR_SINGLE:
+		//DBG("Read single address\n");
+		rmap_process_read_reply(pkt, len);
+		break;
+	case RMAP_READ_ADDR_INC:
+		DBG("Read incrementing address\n");
+		rmap_process_read_reply(pkt, len);
+		break;
+	case RMAP_READ_MODIFY_WRITE_ADDR_INC:
+		DBG("RMW incrementing address verify reply\n");
+		break;
+	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
+		DBG("Write incrementing address verify reply\n");
+		break;
+	case RMAP_WRITE_ADDR_INC_REPLY:
+		DBG("Write incrementing address reply\n");
+		break;
+	default:
+		DBG("decoding of instruction 0x%02X not implemented\n",
+		       ri->cmd);
+		break;
+	}
+}
+
+
+size_t rmap_get_non_rmap_pckt_cnt_err(void)
+{
+	return non_rmap_pkt_err_cnt;
+}
+
+
+void rmap_clear_non_rmap_pckt_cnt_err(void)
+{
+	non_rmap_pkt_err_cnt = 0;
+}
+
+
 /**
  * @brief calculate the CRC8 of a given buffer
  *
@@ -161,7 +375,6 @@ uint8_t rmap_crc8(const uint8_t *buf, const size_t len)
 	};
 
 
-
 	if (!buf)
 		return 0;
 
@@ -187,7 +400,7 @@ struct rmap_pkt *rmap_create_packet(void)
 	struct rmap_pkt *pkt;
 
 
-	pkt = (struct rmap_pkt *) calloc(1, sizeof(struct rmap_pkt));
+	pkt = (struct rmap_pkt *)calloc(1, sizeof(struct rmap_pkt));
 	if (pkt)
 		pkt->proto_id = RMAP_PROTOCOL_ID;
 
@@ -226,6 +439,7 @@ void rmap_erase_packet(struct rmap_pkt *pkt)
 	free(pkt->data);
 	free(pkt);
 }
+
 
 /**
  * @brief set the destination (target) logical address
@@ -298,7 +512,7 @@ int rmap_set_reply_path(struct rmap_pkt *pkt, const uint8_t *rpath, uint8_t len)
 	pkt->rpath_len = len;
 
 	if (len) {
-		pkt->rpath = (uint8_t *) malloc(pkt->rpath_len);
+		pkt->rpath = (uint8_t *)malloc(pkt->rpath_len);
 		if (!pkt->rpath)
 			return -1;
 
@@ -306,7 +520,11 @@ int rmap_set_reply_path(struct rmap_pkt *pkt, const uint8_t *rpath, uint8_t len)
 	}
 
 	/* number of 32 bit words needed to contain the path */
-	pkt->ri.reply_addr_len = len >> 2;
+	/* value is <= 3, the field is 2 bits wide */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+	pkt->ri.reply_addr_len = (uint8_t)(len >> 2);
+#pragma GCC diagnostic pop
 
 	return 0;
 }
@@ -337,7 +555,7 @@ int rmap_set_dest_path(struct rmap_pkt *pkt, const uint8_t *path, uint8_t len)
 
 	pkt->path_len = len;
 
-	pkt->path = (uint8_t *) malloc(pkt->path_len);
+	pkt->path = (uint8_t *)malloc(pkt->path_len);
 	if (!pkt->path)
 		return -1;
 
@@ -365,7 +583,11 @@ int rmap_set_cmd(struct rmap_pkt *pkt, uint8_t cmd)
 		return -1;
 
 
-	pkt->ri.cmd      = cmd & 0xF;
+	/* value is <= 15, the field is 4 bits wide */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+	pkt->ri.cmd      = (uint8_t)(cmd & 0xF);
+#pragma GCC diagnostic pop
 	pkt->ri.cmd_resp = 1;
 
 	return 0;
@@ -403,6 +625,7 @@ void rmap_set_data_addr(struct rmap_pkt *pkt, uint32_t addr)
 	pkt->addr = addr;
 }
 
+
 /**
  * @brief set an RMAP command
  *
@@ -417,7 +640,7 @@ void rmap_set_data_addr(struct rmap_pkt *pkt, uint32_t addr)
  *	 with the GRSPW2 core)
  */
 
-int rmap_set_data_len(struct rmap_pkt *pkt, uint32_t len)
+int rmap_set_data_len(struct rmap_pkt *pkt, size_t len)
 {
 	if (!pkt)
 		return -1;
@@ -425,7 +648,7 @@ int rmap_set_data_len(struct rmap_pkt *pkt, uint32_t len)
 	if (len > RMAP_MAX_DATA_LEN)
 		return -1;
 
-	pkt->data_len = len;
+	pkt->data_len = (uint32_t)len;
 
 	return 0;
 }
@@ -470,7 +693,7 @@ int rmap_build_hdr(struct rmap_pkt *pkt, uint8_t *hdr)
 
 	hdr[n++] = pkt->src;			/* source logical address */
 	hdr[n++] = (uint8_t) (pkt->tr_id >> 8);	/* MSB of transaction id */
-	hdr[n++] = (uint8_t)  pkt->tr_id;	/* LSB of transaction id */
+	hdr[n++] = (uint8_t)pkt->tr_id;	/* LSB of transaction id */
 
 
 	/* commands have a data address */
@@ -479,7 +702,7 @@ int rmap_build_hdr(struct rmap_pkt *pkt, uint8_t *hdr)
 		hdr[n++] = (uint8_t) (pkt->addr >> 24); /* data addr MSB */
 		hdr[n++] = (uint8_t) (pkt->addr >> 16);
 		hdr[n++] = (uint8_t) (pkt->addr >>  8);
-		hdr[n++] = (uint8_t)  pkt->addr;	/* data addr LSB */
+		hdr[n++] = (uint8_t)pkt->addr;	/* data addr LSB */
 	} else if (!pkt->ri.cmd_resp && pkt->ri.cmd & RMAP_CMD_BIT_WRITE) {
 		/* all headers have data length unless they are a write reply */
 		return n;
@@ -489,7 +712,7 @@ int rmap_build_hdr(struct rmap_pkt *pkt, uint8_t *hdr)
 
 	hdr[n++] = (uint8_t) (pkt->data_len >> 16); /* data len MSB */
 	hdr[n++] = (uint8_t) (pkt->data_len >>  8);
-	hdr[n++] = (uint8_t)  pkt->data_len;	    /* data len LSB */
+	hdr[n++] = (uint8_t)pkt->data_len;	    /* data len LSB */
 
 	return n;
 }
@@ -506,7 +729,7 @@ int rmap_build_hdr(struct rmap_pkt *pkt, uint8_t *hdr)
  *	    NULL on error
  */
 
-struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len)
+struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, size_t len)
 {
 	size_t n = 0;
 	size_t i;
@@ -518,14 +741,14 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len)
 	if (!buf)
 		goto error;
 
-	if (len < RMAP_HDR_MIN_SIZE_WRITE_REP) {
+	if (len < (size_t)RMAP_HDR_MIN_SIZE_WRITE_REP) {
 		DBG("buffer len is smaller than the smallest RMAP packet\n");
 		goto error;
 	}
 
-	if (buf[RMAP_PROTOCOL_ID] != RMAP_PROTOCOL_ID) {
+	if (buf[RMAP_PROTOCOL_ID_OFFSET] != RMAP_PROTOCOL_ID) {
 		DBG("Not an RMAP packet, got %x but expected %x\n",
-		       buf[RMAP_PROTOCOL_ID], RMAP_PROTOCOL_ID);
+		       buf[RMAP_PROTOCOL_ID_OFFSET], RMAP_PROTOCOL_ID);
 		non_rmap_pkt_err_cnt++;
 		goto error;
 	}
@@ -537,7 +760,7 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len)
 	}
 
 	pkt->dst         = buf[RMAP_DEST_ADDRESS];
-	pkt->proto_id    = buf[RMAP_PROTOCOL_ID];
+	pkt->proto_id    = buf[RMAP_PROTOCOL_ID_OFFSET];
 	pkt->instruction = buf[RMAP_INSTRUCTION];
 	pkt->key         = buf[RMAP_CMD_DESTKEY];
 
@@ -545,11 +768,11 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len)
 	if (min_hdr_size < 0)
 		goto error;
 
-	if (len < (uint32_t)min_hdr_size) {
+	if (len < (size_t)min_hdr_size) {
 #if (__sparc__)
-		DBG("buffer len is smaller than the contained RMAP packet: %lu vs %lu\n", len, (uint32_t)min_hdr_size);
+		DBG("buffer len is smaller than the contained RMAP packet: %lu vs %lu\n", len, (size_t)min_hdr_size);
 #else
-		DBG("buffer len is smaller than the contained RMAP packet: %u vs %u\n", len, (uint32_t)min_hdr_size);
+		DBG("buffer len is smaller than the contained RMAP packet: %zu vs %zu\n", len, (size_t)min_hdr_size);
 #endif /* __sparc__ */
 		goto error;
 	}
@@ -557,12 +780,12 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len)
 
 	if (pkt->ri.cmd_resp) {
 		pkt->rpath_len = pkt->ri.reply_addr_len << 2;
-		if (len < (uint32_t)min_hdr_size + pkt->rpath_len) {
+		if (len < (size_t)min_hdr_size + pkt->rpath_len) {
 			DBG("buffer is smaller than the contained RMAP packet\n");
 			goto error;
 		}
 
-		pkt->rpath = (uint8_t *) malloc(pkt->rpath_len);
+		pkt->rpath = (uint8_t *)malloc(pkt->rpath_len);
 		if (!pkt->rpath)
 			goto error;
 
@@ -573,56 +796,50 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len)
 	}
 
 	pkt->src   = buf[RMAP_SRC_ADDR + n];
-	pkt->tr_id = ((uint16_t) buf[RMAP_TRANS_ID_BYTE0 + n] << 8) |
-		      (uint16_t) buf[RMAP_TRANS_ID_BYTE1 + n];
+	pkt->tr_id = ((uint16_t)buf[RMAP_TRANS_ID_BYTE0 + n] << 8) |
+		      (uint16_t)buf[RMAP_TRANS_ID_BYTE1 + n];
 
 	/* commands have a data address */
 	if (pkt->ri.cmd_resp) {
-		pkt->addr = ((uint32_t) buf[RMAP_ADDR_BYTE0 + n] << 24) |
-			    ((uint32_t) buf[RMAP_ADDR_BYTE1 + n] << 16) |
-			    ((uint32_t) buf[RMAP_ADDR_BYTE2 + n] <<  8) |
-			     (uint32_t) buf[RMAP_ADDR_BYTE3 + n];
+		pkt->addr = ((uint32_t)buf[RMAP_ADDR_BYTE0 + n] << 24) |
+			    ((uint32_t)buf[RMAP_ADDR_BYTE1 + n] << 16) |
+			    ((uint32_t)buf[RMAP_ADDR_BYTE2 + n] <<  8) |
+			     (uint32_t)buf[RMAP_ADDR_BYTE3 + n];
 		n += 4; /* addr skip, extended byte is incorporated in define */
 	}
 
 	/* all headers have data length unless they are a write reply */
 	if (!(!pkt->ri.cmd_resp && (pkt->ri.cmd & (RMAP_CMD_BIT_WRITE)))) {
-		pkt->data_len = ((uint32_t) buf[RMAP_DATALEN_BYTE0 + n] << 16) |
-				((uint32_t) buf[RMAP_DATALEN_BYTE1 + n] <<  8) |
-				 (uint32_t) buf[RMAP_DATALEN_BYTE2 + n];
+		pkt->data_len = ((uint32_t)buf[RMAP_DATALEN_BYTE0 + n] << 16) |
+				((uint32_t)buf[RMAP_DATALEN_BYTE1 + n] <<  8) |
+				 (uint32_t)buf[RMAP_DATALEN_BYTE2 + n];
 	}
 
-	pkt->hdr_crc  = buf[RMAP_HEADER_CRC];
+	if (len > (size_t)RMAP_HEADER_CRC)
+		pkt->hdr_crc  = buf[RMAP_HEADER_CRC];
 
 	if (pkt->data_len) {
-#if 0
-		if (len < RMAP_DATA_START + n + pkt->data_len + 1) {  /* +1 for data CRC */
-#else
 		if (len < RMAP_DATA_START + n + pkt->data_len) {
-#endif
 
 #if (__sparc__)
 			DBG("buffer len is smaller than the contained RMAP packet; buf len: %lu bytes vs RMAP: %lu bytes needed\n",
 				len, RMAP_DATA_START + n + pkt->data_len);
 #else
-			DBG("buffer len is smaller than the contained RMAP packet; buf len: %u bytes vs RMAP: %lu bytes needed\n",
+			DBG("buffer len is smaller than the contained RMAP packet; buf len: %zu bytes vs RMAP: %zu bytes needed\n",
 				len, RMAP_DATA_START + n + pkt->data_len);
 #endif /* __sparc__ */
 
 			goto error;
 		}
-#if 0
-		if (len > RMAP_DATA_START + n + pkt->data_len + 1)  /* +1 for data CRC */
-#else
-		if (len > RMAP_DATA_START + n + pkt->data_len)
-#endif
+
+		if (len > RMAP_DATA_START + n + pkt->data_len + 1)
 #if (__sparc__)
 			DBG("warning: the buffer is larger than the included RMAP packet %lu vs %lu\n", len,  RMAP_DATA_START + n + pkt->data_len + 1);
 #else
-			DBG("warning: the buffer is larger than the included RMAP packet %u vs %lu\n", len,  RMAP_DATA_START + n + pkt->data_len + 1);
+			DBG("warning: the buffer is larger than the included RMAP packet %zu vs %zu\n", len,  RMAP_DATA_START + n + pkt->data_len + 1);
 #endif /* __sparc__ */
 
-		pkt->data = (uint8_t *) malloc(pkt->data_len);
+		pkt->data = (uint8_t *)malloc(pkt->data_len);
 		if (!pkt->data)
 			goto error;
 
@@ -630,7 +847,8 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, uint32_t len)
 			pkt->data[i] = buf[RMAP_DATA_START + n + i];
 
 		/* final byte is data crc */
-		pkt->data_crc = buf[RMAP_DATA_START + n + i];
+		if (len > RMAP_DATA_START + n + pkt->data_len)
+			pkt->data_crc = buf[RMAP_DATA_START + n + i];
 	}
 
 
@@ -647,246 +865,45 @@ error:
 }
 
 
-
-/**** UNFINISHED INFO STUFF BELOW ******/
-
-__extension__
-static int rmap_check_status(uint8_t status)
-{
-
-
-	DBG("\tStatus: ");
-
-	switch (status) {
-	case RMAP_STATUS_SUCCESS:
-		DBG("Command executed successfully");
-		break;
-	case RMAP_STATUS_GENERAL_ERROR:
-		DBG("General error code");
-		break;
-	case RMAP_STATUS_UNUSED_TYPE_OR_CODE:
-		DBG("Unused RMAP Packet Type or Command Code");
-		break;
-	case RMAP_STATUS_INVALID_KEY:
-		DBG("Invalid key");
-		break;
-	case RMAP_STATUS_INVALID_DATA_CRC:
-		DBG("Invalid Data CRC");
-		break;
-	case RMAP_STATUS_EARLY_EOP:
-		DBG("Early EOP");
-		break;
-	case RMAP_STATUS_TOO_MUCH_DATA:
-		DBG("Too much data");
-		break;
-	case RMAP_STATUS_EEP:
-		DBG("EEP");
-		break;
-	case RMAP_STATUS_RESERVED:
-		DBG("Reserved");
-		break;
-	case RMAP_STATUS_VERIFY_BUFFER_OVERRRUN:
-		DBG("Verify buffer overrrun");
-		break;
-	case RMAP_STATUS_CMD_NOT_IMPL_OR_AUTH:
-		DBG("RMAP Command not implemented or not authorised");
-		break;
-	case RMAP_STATUS_RMW_DATA_LEN_ERROR:
-		DBG("RMW Data Length error");
-		break;
-	case RMAP_STATUS_INVALID_TARGET_LOGICAL_ADDR:
-		DBG("Invalid Target Logical Address");
-		break;
-	default:
-		DBG("Reserved unused error code %d", status);
-		break;
-	}
-
-	DBG("\n");
-
-
-	return status;
-}
-
-
-
-static void rmap_process_write_cmd(uint8_t *pkt)
-{
-	uint32_t i;
-
-	uint32_t len = 0;
-	uint32_t addr  = 0;
-
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE0]) << 24;
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE1]) << 16;
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE2]) <<  8;
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE3]) <<  0;
-
-
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE0 + 4]) << 16;
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE1 + 4]) <<  8;
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE2 + 4]) <<  0;
-
-	printf("CMD WR to %08x size %d bytes: ", addr, len); 
-
-	for (i = 0; i < len; i++)
-		printf("%02x:", pkt[RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET + i]);
-
-	printf("\b \n");
-}
-
-
-
-
-static void rmap_process_read_cmd(uint8_t *pkt)
-{
-	uint32_t len = 0;
-	uint32_t addr  = 0;
-
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE0]) << 24;
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE1]) << 16;
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE2]) <<  8;
-	addr |= ((uint32_t) pkt[RMAP_ADDR_BYTE3]) <<  0;
-
-
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE0 + 4]) << 16;
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE1 + 4]) <<  8;
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE2 + 4]) <<  0;
-
-	printf("CMD RD from %08x size %d bytes\n", addr, len); 
-
-}
-
-
-
-static void rmap_process_read_reply(uint8_t *pkt)
-{
-	uint32_t i;
-
-	uint32_t len = 0;
-
-
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE0]) << 16;
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE1]) <<  8;
-	len |= ((uint32_t) pkt[RMAP_DATALEN_BYTE2]) <<  0;
-
-
-
-	printf("RD reply size %d bytes: ", len); 
-
-	for (i = 0; i < len; i++)
-		printf("%02x:", pkt[RMAP_DATA_START + i]);
-
-	printf("\b \n");
-}
-
-
-
-
-static void rmap_parse_cmd_pkt(uint8_t *pkt)
-{
-	struct rmap_instruction *ri;
-	
-
-	ri = (struct rmap_instruction *) &pkt[RMAP_INSTRUCTION];
-
-
-	switch (ri->cmd) {
-
-	case RMAP_READ_ADDR_SINGLE:
-		DBG("Read single address\n");
-		rmap_process_read_cmd(pkt);
-		break;
-	case RMAP_READ_ADDR_INC:
-		DBG("Read incrementing address\n");
-		rmap_process_read_cmd(pkt);
-		break;
-	case RMAP_READ_MODIFY_WRITE_ADDR_INC:
-		rmap_process_write_cmd(pkt);
-		DBG("RMW incrementing address verify reply\n");
-		break;
-	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
-		rmap_process_write_cmd(pkt);
-		DBG("Write incrementing address verify reply\n");
-		break;
-	case RMAP_WRITE_ADDR_INC_REPLY:
-		rmap_process_write_cmd(pkt);
-		DBG("Write incrementing address reply\n");
-		break;
-	default:
-		DBG("decoding of instruction 0x%02X not implemented\n",
-		       ri->cmd);
-		rmap_process_write_cmd(pkt);
-		break;
-	}
-
-}
-
-
-
-static void rmap_parse_reply_pkt(uint8_t *pkt)
-{
-	struct rmap_instruction *ri;
-
-
-	ri = (struct rmap_instruction *) &pkt[RMAP_INSTRUCTION];
-
-	DBG("\tInstruction: ");
-
-	switch (ri->cmd) {
-
-	case RMAP_READ_ADDR_SINGLE:
-		//DBG("Read single address\n");
-		rmap_process_read_reply(pkt);
-		break;
-	case RMAP_READ_ADDR_INC:
-		DBG("Read incrementing address\n");
-		rmap_process_read_reply(pkt);
-		break;
-	case RMAP_READ_MODIFY_WRITE_ADDR_INC:
-		DBG("RMW incrementing address verify reply\n");
-		break;
-	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
-		DBG("Write incrementing address verify reply\n");
-		break;
-	case RMAP_WRITE_ADDR_INC_REPLY:
-		DBG("Write incrementing address reply\n");
-		break;
-	default:
-		DBG("decoding of instruction 0x%02X not implemented\n",
-		       ri->cmd);
-		break;
-	}
-}
-
-
 /**
  * parse an RMAP packet:
  *
  * expected format: <logical address> <protocol id> ...
  */
 
-void rmap_parse_pkt(uint8_t *pkt)
+void rmap_parse_pkt(uint8_t *pkt, size_t len)
 {
 	struct rmap_instruction *ri;
 
-	if (pkt[RMAP_PROTOCOL_ID] != RMAP_PROTOCOL_ID) {
-		DBG("\nNot an RMAP packet, got %x but expected %x\n",
-		       pkt[RMAP_PROTOCOL_ID], RMAP_PROTOCOL_ID);
+
+	if (len < RMAP_REPLY_STATUS + 1) {
+		DBG("RMAP parse: packet too short (%zu bytes)\n", len);
 		return;
 	}
 
+	if (pkt[RMAP_PROTOCOL_ID_OFFSET] != RMAP_PROTOCOL_ID) {
+		DBG("\nNot an RMAP packet, got %x but expected %x\n",
+		       pkt[RMAP_PROTOCOL_ID_OFFSET], RMAP_PROTOCOL_ID);
+		return;
+	}
 
-	ri = (struct rmap_instruction *) &pkt[RMAP_INSTRUCTION];
+	/* protect the sub-parser reads that access up to the datalen field
+	 * (pkt[RMAP_DATALEN_BYTE2 + RMAP_ADDR_EXTRA_OFFSET])
+	 */
+	if (len < RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET) {
+		DBG("RMAP header too short (%zu bytes, need %d)\n",
+		       len, RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET);
+		return;
+	}
 
+	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
 	if (ri->cmd_resp) {
 		DBG("This is a command packet\n");
-		if (!rmap_check_status(pkt[RMAP_REPLY_STATUS]))
-			rmap_parse_cmd_pkt(pkt);
+		rmap_parse_cmd_pkt(pkt, len);
 	} else {
 		DBG("This is a reply packet\n");
+
 		if (!rmap_check_status(pkt[RMAP_REPLY_STATUS]))
-			rmap_parse_reply_pkt(pkt);
+			rmap_parse_reply_pkt(pkt, len);
 	}
 }
-

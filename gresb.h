@@ -32,8 +32,8 @@
 
 #define GRESB_VLINK_MAX		5
 #define GRESB_VLINK_PORT_BASE	3000
-#define GRESB_VLINK_TX(link)	(GRESB_VLINK_PORT_BASE + (2 * (link)))
-#define GRESB_VLINK_RX(link)	(GRESB_VLINK_PORT_BASE + (2 * (link) + 1))
+#define GRESB_VLINK_TX(link)	(GRESB_VLINK_PORT_BASE + (int)(2 * (link)))
+#define GRESB_VLINK_RX(link)	(GRESB_VLINK_PORT_BASE + (int)(2 * (link) + 1))
 
 
 /**
@@ -92,7 +92,7 @@ struct gresb_to_host_pkt {
 
 
 
-uint8_t *gresb_create_host_data_pkt(const uint8_t *data, uint32_t len);
+uint8_t *gresb_create_host_data_pkt(const uint8_t *data, size_t len);
 void gresb_destroy_host_data_pkt(struct host_to_gresb_pkt *pkt);
 size_t gresb_get_host_data_pkt_size(uint8_t *buf);
 
@@ -103,7 +103,7 @@ uint8_t gresb_get_spw_pkt_truncated(uint8_t *buf);
 uint8_t gresb_get_spw_pkt_eeop(uint8_t *buf);
 
 
-int gresb_get_virtual_link_tx_port(unsigned int link);
-int gresb_get_virtual_link_rx_port(unsigned int link);
+int gresb_get_virtual_link_tx_port(uint32_t link);
+int gresb_get_virtual_link_rx_port(uint32_t link);
 
 #endif /* GRESB_H */
