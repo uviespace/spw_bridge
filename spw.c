@@ -109,17 +109,19 @@ static void *poll_spw(void *ptr)
 
 	STAR_TRANSFER_STATUS rx_status;
 
-	uint8_t *spw_recv_buffer = NULL;
+	uint8_t *spw_recv_buffer;
 	struct bridge_cfg *cfg;
 	struct spw_poll_arg *arg;
 
-	STAR_SPACEWIRE_PACKET *p_spw_packet       = NULL;
-	STAR_TRANSFER_OPERATION *p_rx_transfer_op = NULL;
+	STAR_SPACEWIRE_PACKET *p_spw_packet;
+	STAR_TRANSFER_OPERATION *p_rx_transfer_op;
 
 
 	arg = (struct spw_poll_arg *)ptr;
 	cfg = arg->cfg;
 	chan = arg->chan;
+
+	spw_recv_buffer = NULL;
 
 	while (1) {
 
@@ -349,8 +351,8 @@ bool spw_link_ready(struct bridge_cfg *cfg)
 void spw_send_packet_chan(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
 			  size_t len)
 {
-	STAR_STREAM_ITEM 	*p_tx_stream_item = NULL;
-	STAR_TRANSFER_OPERATION *p_tx_transfer_op = NULL;
+	STAR_STREAM_ITEM *p_tx_stream_item;
+	STAR_TRANSFER_OPERATION *p_tx_transfer_op;
 
 	struct spw_state *st;
 

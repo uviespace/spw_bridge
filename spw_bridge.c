@@ -697,6 +697,15 @@ int pus_pkt_crc_valid(const uint8_t *pkt, size_t len)
 }
 
 
+/**
+ * @brief program entry: parse the options and run the bridge
+ *
+ * @param argc argument count
+ * @param argv argument vector
+ *
+ * @return 0 on clean shutdown
+ */
+
 int main(int argc, char **argv)
 {
 	struct bridge_cfg cfg;

@@ -666,7 +666,7 @@ static ssize_t recv_gresb_packet(struct net_service *svc, int sockfd, uint8_t **
 	size_t gsize;
 	ssize_t recv_bytes;
 
-	uint8_t *pkt_buf = NULL;
+	uint8_t *pkt_buf;
 
 	uint8_t gresb_hdr[4];	/* host-to-gresb header is 4 bytes */
 
@@ -725,7 +725,7 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 
 	struct sockaddr_in client;
 
-	uint8_t *recv_buffer = NULL;
+	uint8_t *recv_buffer;
 
 	struct bridge_cfg *cfg;
 
@@ -835,7 +835,7 @@ static void rmap_net_to_spw(struct net_service *svc, int sockfd)
 
 	ssize_t n;
 
-	uint8_t *rec = NULL;
+	uint8_t *rec;
 
 	uint8_t tmp[10];
 
@@ -849,7 +849,7 @@ static void rmap_net_to_spw(struct net_service *svc, int sockfd)
 	n = recv(sockfd, tmp, 10, MSG_PEEK);
 	if (n != 10) {
 		rmap_conn_drop(svc, sockfd, n < 0);
-		goto cleanup;
+		return;
 	}
 
 	dst = tmp[0];
@@ -871,7 +871,7 @@ static void rmap_net_to_spw(struct net_service *svc, int sockfd)
 	if (size > MAX_SPW_PACKET_SIZE) {
 		printf("Oversized RMAP request, %zu bytes\n", size);
 		rmap_conn_drop(svc, sockfd, 0);
-		goto cleanup;
+		return;
 	}
 
 	rec = (uint8_t *)malloc(size + 10);
@@ -993,12 +993,14 @@ static void forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_
 {
 	int fd;
 
-	uint8_t *gresb_pkt = NULL;
+	uint8_t *gresb_pkt;
 
 	struct net_service *svc;
 
 
 	svc = &cfg->net->data;
+
+	gresb_pkt = NULL;
 
 	if (cfg->mode == MODE_DGRAM) {
 

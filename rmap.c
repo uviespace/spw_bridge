@@ -29,14 +29,6 @@
 static size_t non_rmap_pkt_err_cnt;
 
 
-/**
- * @brief valiidates a command code
- *
- * @param cmd the command code
- *
- * @returns 0 on success, error otherwise
- */
-
 static int rmap_validate_cmd_code(uint8_t cmd)
 {
 	switch (cmd) {
@@ -57,14 +49,6 @@ static int rmap_validate_cmd_code(uint8_t cmd)
 	}
 }
 
-
-/**
- * @brief get the minimum header size given the RMAP instruction
- *
- * @param pkt a struct rmap_pkt
- *
- * @returns header size or -1 on error
- */
 
 static int rmap_get_min_hdr_size(struct rmap_pkt *pkt)
 {
@@ -311,11 +295,21 @@ static void rmap_parse_reply_pkt(uint8_t *pkt, size_t len)
 }
 
 
+/**
+ * @brief get the number of non-RMAP packets seen since the last clear
+ *
+ * @returns the error counter value
+ */
+
 size_t rmap_get_non_rmap_pckt_cnt_err(void)
 {
 	return non_rmap_pkt_err_cnt;
 }
 
+
+/**
+ * @brief reset the non-RMAP packet error counter
+ */
 
 void rmap_clear_non_rmap_pckt_cnt_err(void)
 {

@@ -23,15 +23,6 @@
 
 #include <gresb.h>
 
-/**
- * @brief set the protocol field in the header
- *
- * @pkt a host-to-gresb packet
- * @protocol the protocol to set
- *
- * @returns -1 on error
- */
-
 static int gresb_host_pkt_set_protocol(struct host_to_gresb_pkt *pkt, uint8_t protocol)
 {
 
@@ -53,17 +44,6 @@ static int gresb_host_pkt_set_protocol(struct host_to_gresb_pkt *pkt, uint8_t pr
 }
 
 
-/**
- * @brief set the data size field in the header
- *
- * @pkt  a host-to-gresb packet
- * @size the data size to set
- *
- * @note size is truncated to 24 bits
- *
- * @returns -1 on error
- */
-
 static int gresb_host_pkt_set_data_size(struct host_to_gresb_pkt *pkt, size_t size)
 {
 	if (!pkt)
@@ -82,14 +62,6 @@ static int gresb_host_pkt_set_data_size(struct host_to_gresb_pkt *pkt, size_t si
 }
 
 
-/**
- * @brief get the data size of a packet
- *
- * @pkt  a host-to-gresb packet
- *
- * @returns the data size
- */
-
 static size_t gresb_host_pkt_get_data_size(struct host_to_gresb_pkt *pkt)
 {
 	size_t n = 0;
@@ -104,14 +76,6 @@ static size_t gresb_host_pkt_get_data_size(struct host_to_gresb_pkt *pkt)
 	return n;
 }
 
-
-/**
- * @brief get the data size of a packet
- *
- * @pkt  a gresb-to-host packet
- *
- * @returns the data size
- */
 
 static size_t gresb_pkt_get_data_size(struct gresb_to_host_pkt *pkt)
 {
