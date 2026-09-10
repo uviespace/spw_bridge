@@ -41,19 +41,21 @@ struct spw_state;
  * @brief callback invoked for every complete packet received on the SpW link
  *
  * @param cfg the bridge configuration
+ * @param chan index of the SpW channel the packet was received on
  * @param buf received packet bytes, including the leading path header
  * @param len size of the packet in bytes
  */
 
-typedef void (*bridge_pkt_sink)(struct bridge_cfg *cfg, uint8_t *buf, size_t len);
+typedef void (*bridge_pkt_sink)(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
+				size_t len);
 
 
-struct bridge_cfg
-{
+struct bridge_cfg {
 	enum net_mode	mode;
 	uint32_t	port;
 	uint32_t	rmap_port;
 	uint32_t	channel;
+	uint32_t	channel2;
 	uint32_t	link_id;
 	uint32_t	dev_num;
 	bool		reset_dev;
@@ -63,6 +65,8 @@ struct bridge_cfg
 	useconds_t	pkt_throttle_usec;
 	bool		interpret_pus;
 	bool		interpret_fee;
+	bool		interpret_rmap;
+	bool		enable_monitor;
 	bool		enable_rmap;
 	bool		enable_gresb;
 	bool		pus_debug;
@@ -95,6 +99,19 @@ bool spw_link_ready(struct bridge_cfg *cfg);
  */
 
 void spw_send_packet(struct bridge_cfg *cfg, uint8_t *buf, size_t len);
+
+
+/**
+ * @brief transmit a packet on one of the two SpaceWire links
+ *
+ * @param cfg bridge configuration
+ * @param chan index of the SpW channel to transmit on (0 or 1)
+ * @param buf packet bytes, including the leading path header
+ * @param len size of the packet in bytes
+ */
+
+void spw_send_packet_chan(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
+			  size_t len);
 
 
 /**
@@ -205,11 +222,12 @@ void net_release(struct bridge_cfg *cfg);
  * @brief handle a complete packet received on the SpW link
  *
  * @param cfg the bridge configuration
+ * @param chan index of the SpW channel the packet was received on
  * @param buf received packet bytes, including the leading path header
  * @param len size of the packet in bytes
  */
 
-void net_pkt_sink(struct bridge_cfg *cfg, uint8_t *buf, size_t len);
+void net_pkt_sink(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf, size_t len);
 
 
 /**

@@ -1,6 +1,6 @@
 \title{User Manual}
 \def \documentid {SPW\_BRIDGE-UVIE-UM-001}
-\date{Issue 1.0, September 10, 2026}
+\date{Issue 1.1, September 10, 2026}
 
 \newcommand\affil[1]{\textsuperscript#1}
 
@@ -63,6 +63,7 @@
 
 \begin{versionhistory}
   \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
+  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding}
 \end{versionhistory}
 
 
@@ -219,6 +220,9 @@ between packets.\\
 
 \item Optional device reset on startup.\\
 
+\item Monitor mode: verbatim copying of packets between two \gls{SpW} channels
+of the same device, with the network side acting as a passive observer.\\
+
 \end{itemize}
 
 
@@ -306,6 +310,10 @@ packet is handed to the network sink. Transmission uses
 \texttt{STAR\_createPacket} plus a transmit transfer operation, with an
 optional throttle delay after each packet. Reads and writes of registers on
 remote targets are implemented with the STAR RMAP packet library, see below.
+\\
+In monitor mode (Section~\ref{sec:monitor}) two channels of the device are
+opened instead of one, each polled by its own thread; received packets are
+copied to the other channel without a routing header.
 
 \section{RMAP Helper Functions}
 
@@ -459,6 +467,8 @@ The full option set is:
 	\texttt{-C}		& disable the PUS CRC16 check (see Section~\ref{sec:puscrc}) \\
 	\texttt{-F}		& parse the network byte stream for FEE data packets \\
 	\texttt{-R [PORT]}	& enable the pseudo--\gls{RMAP} service on PORT (default 2345) \\
+	\texttt{-M C1:C2}	& monitor mode: bridge the given \gls{SpW} channels, copying packets verbatim between them \\
+	\texttt{-E}		& decode \gls{RMAP} packets in the debug printout (requires \texttt{-M} and \texttt{-D}) \\
 	\texttt{-G}		& use the GRESB protocol for the network exchange \\
 	\texttt{-X}		& perform a device reset before opening the channel \\
 	\texttt{-h}, \texttt{--help}& print the usage message and exit \\
@@ -532,6 +542,90 @@ requires \texttt{-P}; once enabled, the printout can also be switched on and
 off from the keyboard while the bridge is running (see
 Section~\ref{sec:kbd}).
 
+\section{Monitor Mode}
+\label{sec:monitor}
+
+Monitor mode turns the bridge into a passive tap between two \gls{SpW}
+channels of the same device. It is enabled with
+\texttt{-M CHANNEL1:CHANNEL2}; the two colon-separated channel numbers select
+the physical \gls{SpW} ports to be bridged. The two channels must differ.
+\\
+In this mode every packet received on one channel is copied verbatim to the
+other, without adding or stripping a routing header and without any
+interpretation on the forwarding path. The bridge neither inserts routing
+bytes nor drops packet headers, and the forwarded \gls{SpW} transactions
+remain atomic. The network side works as before, but it only observes: all
+data received from the network is discarded, and the connected clients
+receive a mirror of the copied \gls{SpW} traffic in both directions. The
+channel selection \texttt{-c} and the header-drop option \texttt{-d} are
+ignored; the routing path given with \texttt{-n} is not applied to the copied
+packets. The link signalling rate set with \texttt{-S} is applied to both
+channels.
+\\
+With \texttt{-D}, the debug printout shows the direction of the copied packet
+as \texttt{SPW[A]->SPW[B]} instead of the network directions, followed by a
+hex dump of the raw packet payload. With the additional \texttt{-E} option the
+packets are decoded as \gls{RMAP} and a header line is printed in front of the
+payload dump (see Section~\ref{sec:mondbg}). A packet that cannot be parsed as
+\gls{RMAP} is reported as such. No \gls{PUS} interpretation is performed on
+the monitor path, and packets are never modified by the decoding.
+
+\section{Reading the Monitor Mode Printout}
+\label{sec:mondbg}
+
+In monitor mode, the debug printout of every copied packet is preceded by a
+time stamp and the direction of travel, using the actual channel numbers of the
+bridge (e.g. \texttt{SPW[1]->SPW[2]} for a packet received on channel~1 and
+copied to channel~2). Without \texttt{-E} the packet is shown as a raw hex dump
+of its payload:
+
+\begin{lstlisting}
+[2026-09-10 10:20:30.512] SPW[1]->SPW[2]
+  payload (18 bytes):
+  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+  10 11
+\end{lstlisting}
+
+\noindent
+With \texttt{-E}, a decoded \gls{RMAP} header line is printed in front of the
+payload dump; a write command and the matching read reply, for example, look
+like
+
+\begin{lstlisting}
+[2026-09-10 10:20:30.512] SPW[1]->SPW[2]
+  RMAP: CMD WRITE dst=0xfe key=0xab src=0x30 tr_id=1 addr=0x00001000 data_len=2 hdr_crc=0x1b data_crc=0x4a
+  payload (19 bytes):
+  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+  10 11 12
+
+[2026-09-10 10:20:32.013] SPW[2]->SPW[1]
+  RMAP: REPLY READ dst=0x30 key=0x00 src=0xfe tr_id=1 addr=0x00001000 data_len=5 hdr_crc=0x77 data_crc=0x2c
+  payload (22 bytes):
+  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+  10 11 12 13 14 15
+\end{lstlisting}
+
+\noindent
+The printed fields are
+
+\begin{tabu} to \linewidth {@{}ll@{}}
+	\texttt{SPW[A]->SPW[B]}	& direction of travel: the channel the packet was received on, and the channel it is copied to \\
+	\texttt{CMD}, \texttt{REPLY} & whether the packet is an \gls{RMAP} command or a reply \\
+	\texttt{WRITE}, \texttt{READ} & the operation of an \gls{RMAP} command \\
+	\texttt{dst}, \texttt{src}	& target and initiator logical addresses \\
+	\texttt{key}		& command authorisation key (status field in replies) \\
+	\texttt{tr\_id}		& transaction identifier \\
+	\texttt{addr}		& (first) data address \\
+	\texttt{data\_len}	& length of the \gls{RMAP} data field in octets \\
+	\texttt{hdr\_crc}, \texttt{data\_crc} & the header and data CRC-8 values carried by the packet \\
+\end{tabu}
+
+\noindent
+A packet that cannot be parsed as \gls{RMAP} is announced with a
+{\ttfamily not an RMAP packet} line and only its payload is dumped. The payload
+itself is formatted as in the PUS printout (Section~\ref{sec:pusdbg}): hex
+octets, sixteen per line, with an empty line closing the dump.
+
 \section{Keyboard Control of the Debug Printout}
 \label{sec:kbd}
 
@@ -598,6 +692,11 @@ The printed fields are
 The payload is dumped as hex octets, sixteen per line, with an empty line
 closing the dump. A payload that ends with a partial line is terminated
 properly, so every packet dump is followed by a blank line.
+\\
+In monitor mode (Section~\ref{sec:monitor}) the dump shows the raw copied
+packet; with \texttt{-E} an \gls{RMAP} header line (command or reply, read or
+write, addresses, transaction identifier, data length and the CRCs) is printed
+in its place.
 
 \section{The PUS CRC16 Check}
 \label{sec:puscrc}
@@ -671,6 +770,19 @@ Transmit and receive on channel 2 of the first detected device:
 \begin{lstlisting}[language=bash]
   $ ./spw_bridge -c 2
 \end{lstlisting}
+
+\subsection{Link Monitoring}
+
+To observe the traffic between two \gls{SpW} targets connected to channels 1
+and 2 of the same device, copy the packets verbatim between the channels and
+decode them as \gls{RMAP}:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -M 1:2 -D -E
+\end{lstlisting}
+
+\noindent
+The network clients see a mirror of both directions of the copied traffic.
 
 \subsection{Brick MK II Configuration}
 

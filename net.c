@@ -61,8 +61,7 @@ struct fee_data_hdr {
 
 
 /* one service is shared by all its clients, the connection set is multiplexed */
-struct net_service
-{
+struct net_service {
 	struct net_state	*state;
 	int			sock_fd;
 	fd_set			conn_set;
@@ -75,8 +74,7 @@ struct net_service
 };
 
 
-struct net_state
-{
+struct net_state {
 	struct bridge_cfg	*cfg;
 	bool			is_client;
 	int			client_sock;
@@ -749,6 +747,14 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 	if (cfg->mode == MODE_DGRAM)
 		dgram_add_client(svc, &client);
 
+	if (cfg->enable_monitor) {
+		/* monitor mode: the network side only observes and sends, anything
+		 * received from the net is discarded to keep the links untouched
+		 */
+		free(recv_buffer);
+		return;
+	}
+
 	DBG("NET->PC: ");
 	for (i = 0; i < packet_length; i++)
 		DBG("%02x", recv_buffer[i]);
@@ -1051,8 +1057,33 @@ static void forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_
  * @param len size of the packet in bytes
  */
 
-void net_pkt_sink(struct bridge_cfg *cfg, uint8_t *buf, size_t len)
+void net_pkt_sink(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf, size_t len)
 {
+	char dir[64];
+
+	uint32_t other;
+
+	if (cfg->enable_monitor) {
+		/* monitor mode: copy the packet verbatim to the other link and
+		 * hand the plain bytes to the clients for observation; nothing
+		 * is routed, interpreted or stripped on the way
+		 */
+		other = 1 - chan;
+
+		snprintf(dir, sizeof(dir), "SPW[%u]->SPW[%u]",
+			 chan == 0 ? cfg->channel : cfg->channel2,
+			 chan == 0 ? cfg->channel2 : cfg->channel);
+
+		pus_debug_print(cfg, dir, buf, len);
+
+		if (spw_link_ready(cfg))
+			spw_send_packet_chan(cfg, other, buf, len);
+
+		forward_to_clients(cfg, buf, len);
+
+		return;
+	}
+
 	if (len <= cfg->skip_header_bytes) {
 		printf("skip_header_bytes is %zu, dropping packet\n", cfg->skip_header_bytes);
 		return;

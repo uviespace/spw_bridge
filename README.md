@@ -43,6 +43,9 @@ the program and shut down the device cleanly.
 	-C               disable the PUS CRC16 check
 	-F               parse the network byte stream for FEE data packets
 	-R [PORT]        enable the pseudo-RMAP service on PORT (default 2345)
+	-M C1:C2         monitor mode: bridge the given SpW channels, copying
+	                 packets verbatim between them
+	-E               decode RMAP packets in the debug printout (requires -M and -D)
 	-G               use the GRESB protocol for the network exchange
 	-X               perform a device reset before opening the channel
 	-h, --help       print the usage message and exit
@@ -71,6 +74,27 @@ check is reported on stderr, packets are never dropped. `-D` additionally
 prints a decoded CCSDS/PUS-C header and payload dump for every packet in both
 directions; the printout can be toggled on and off from the terminal with
 `d`/`D` while the bridge is running (requires stdin to be a terminal).
+
+## Monitor Mode
+
+Monitor mode turns the bridge into a passive tap between two SpW channels of
+the same device:
+
+	./spw_bridge -M 1:2
+
+Every packet received on one channel is copied verbatim to the other; no
+routing header is added or stripped, no header bytes are dropped and the
+forwarded SpW transactions stay atomic. The network interface keeps serving
+clients but only observes: everything received from the network is discarded,
+and the connected peers see a mirror of the copied traffic in both directions.
+`-S` (link speed) is applied to both channels; `-c` and `-d` are ignored.
+
+`-D` prints the copied direction (`SPW[1]->SPW[2]`) and a raw payload dump; add
+`-E` to decode the packets as RMAP (CMD/REPLY, WRITE/READ, destination and
+initiator addresses, transaction id, data address and length, and the header
+and data CRCs):
+
+	./spw_bridge -M 1:2 -D -E
 
 ## Examples
 

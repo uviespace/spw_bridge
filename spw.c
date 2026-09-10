@@ -48,24 +48,31 @@
 #define RMAP_DEFAULT_KEY	0xab
 
 
-/* everything the SpW subsystem keeps across its threads, allocated with the
- * device in spw_setup_device() and freed by spw_release()
- */
-struct spw_state
-{
-	STAR_DEVICE_ID		dev_id;
-	STAR_CHANNEL_ID		spw_chan_id;
-	STAR_SPACEWIRE_ADDRESS	*p_address;
-	STAR_TRANSFER_STATUS	tx_status;
-	volatile bool		shutdown;
-	pthread_t		th_spw_poll;
-	pthread_mutex_t		pus_op_lock;
-	STAR_TRANSFER_OPERATION *pus_tx_transfer_op;
-	STAR_TRANSFER_OPERATION *pus_rx_transfer_op;
+struct spw_poll_arg {
+	struct bridge_cfg	*cfg;
+	uint32_t		chan;
 };
 
 
-static STAR_TRANSFER_OPERATION *spw_setup_rx_op(struct bridge_cfg *cfg)
+/* everything the SpW subsystem keeps across its threads, allocated with the
+ * device in spw_setup_device() and freed by spw_release(); the channel-indexed
+ * members carry state for the two channels used in monitor mode
+ */
+struct spw_state {
+	STAR_DEVICE_ID		dev_id;
+	STAR_SPACEWIRE_ADDRESS	*p_address;
+	STAR_CHANNEL_ID		spw_chan_id[2];
+	STAR_TRANSFER_STATUS	tx_status;
+	volatile bool		shutdown;
+	pthread_t		th_spw_poll[2];
+	pthread_mutex_t		pus_op_lock;
+	struct spw_poll_arg	poll_arg[2];
+	STAR_TRANSFER_OPERATION *pus_tx_transfer_op[2];
+	STAR_TRANSFER_OPERATION *pus_rx_transfer_op[2];
+};
+
+
+static STAR_TRANSFER_OPERATION *spw_setup_rx_op(struct bridge_cfg *cfg, uint32_t chan)
 {
 	STAR_TRANSFER_OPERATION *p_rx_transfer_op;
 
@@ -77,13 +84,13 @@ static STAR_TRANSFER_OPERATION *spw_setup_rx_op(struct bridge_cfg *cfg)
 
 	pthread_mutex_lock(&cfg->spw->pus_op_lock);
 
-	if (cfg->spw->pus_rx_transfer_op)
-		STAR_disposeTransferOperation(cfg->spw->pus_rx_transfer_op);
+	if (cfg->spw->pus_rx_transfer_op[chan])
+		STAR_disposeTransferOperation(cfg->spw->pus_rx_transfer_op[chan]);
 
-	cfg->spw->pus_rx_transfer_op = p_rx_transfer_op;
+	cfg->spw->pus_rx_transfer_op[chan] = p_rx_transfer_op;
 	pthread_mutex_unlock(&cfg->spw->pus_op_lock);
 
-	if (!STAR_submitTransferOperation(cfg->spw->spw_chan_id, p_rx_transfer_op)) {
+	if (!STAR_submitTransferOperation(cfg->spw->spw_chan_id[chan], p_rx_transfer_op)) {
 		printf("Error during transfer submission\n");
 		exit(EXIT_FAILURE);
 	}
@@ -96,18 +103,23 @@ static void *poll_spw(void *ptr)
 {
 	uint32_t i;
 
+	uint32_t chan;
+
 	uint32_t spw_recv_bytes;
 
 	STAR_TRANSFER_STATUS rx_status;
 
 	uint8_t *spw_recv_buffer = NULL;
 	struct bridge_cfg *cfg;
+	struct spw_poll_arg *arg;
 
 	STAR_SPACEWIRE_PACKET *p_spw_packet       = NULL;
 	STAR_TRANSFER_OPERATION *p_rx_transfer_op = NULL;
 
 
-	cfg = (struct bridge_cfg *)ptr;
+	arg = (struct spw_poll_arg *)ptr;
+	cfg = arg->cfg;
+	chan = arg->chan;
 
 	while (1) {
 
@@ -119,7 +131,7 @@ static void *poll_spw(void *ptr)
 
 		spw_recv_buffer = NULL;
 
-		p_rx_transfer_op = spw_setup_rx_op(cfg);
+		p_rx_transfer_op = spw_setup_rx_op(cfg, chan);
 
 		if (cfg->spw->shutdown)
 			break;
@@ -148,7 +160,7 @@ static void *poll_spw(void *ptr)
 		DBG("\n");
 
 		if (cfg->pkt_sink)
-			cfg->pkt_sink(cfg, spw_recv_buffer, spw_recv_bytes);
+			cfg->pkt_sink(cfg, chan, spw_recv_buffer, spw_recv_bytes);
 	}
 
 	/* reached on shutdown: the current packet and transfer operation are
@@ -274,6 +286,38 @@ static void print_path(const uint8_t *path, uint16_t path_len)
 }
 
 
+static void start_link(struct bridge_cfg *cfg, uint32_t chan, uint32_t link_id)
+{
+	U16 link_speed_u16;
+
+	PORT_STATUS_CONTROL port_status;
+	STAR_CFG_SPW_LINK_STATUS link_status;
+
+
+	/* make sure the link is running */
+	if (CFG_getPortStatusControl(cfg->spw->dev_id, (U8)chan, &port_status)) {
+		printf("Failed to read port status control\n");
+		port_status = 0;
+	}
+
+	if (CFG_getSpaceWireLinkStatus(port_status, &link_status)) {
+		printf("Failed to read link status, forcing a clean slate\n");
+		memset(&link_status, 0, sizeof(link_status));
+	}
+
+	link_status.start = 1;
+	link_status.running = 1;
+
+	if (CFG_setSpaceWireLinkStatus(cfg->spw->dev_id, (U8)chan, &link_status))
+		printf("Failed to set link to running state\n");
+
+	if (CFG_getMeasuredLinkSpeed(cfg->spw->dev_id, (U8)link_id, &link_speed_u16))
+		printf("Failed to read measured link speed\n");
+	else
+		printf("Measured RX link speed %g Mbps\n", (double)link_speed_u16 / 10.0);
+}
+
+
 /**
  * @brief check if the SpW channel is open
  *
@@ -287,7 +331,10 @@ bool spw_link_ready(struct bridge_cfg *cfg)
 	if (!cfg->spw)
 		return false;
 
-	return cfg->spw->spw_chan_id != 0;
+	if (cfg->enable_monitor)
+		return cfg->spw->spw_chan_id[0] && cfg->spw->spw_chan_id[1];
+
+	return cfg->spw->spw_chan_id[0] != 0;
 }
 
 
@@ -299,7 +346,8 @@ bool spw_link_ready(struct bridge_cfg *cfg)
  * @param len size of the packet in bytes
  */
 
-void spw_send_packet(struct bridge_cfg *cfg, uint8_t *buf, size_t len)
+void spw_send_packet_chan(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
+			  size_t len)
 {
 	STAR_STREAM_ITEM 	*p_tx_stream_item = NULL;
 	STAR_TRANSFER_OPERATION *p_tx_transfer_op = NULL;
@@ -322,10 +370,10 @@ void spw_send_packet(struct bridge_cfg *cfg, uint8_t *buf, size_t len)
 	}
 
 	pthread_mutex_lock(&st->pus_op_lock);
-	st->pus_tx_transfer_op = p_tx_transfer_op;
+	st->pus_tx_transfer_op[chan] = p_tx_transfer_op;
 	pthread_mutex_unlock(&st->pus_op_lock);
 
-	if (!STAR_submitTransferOperation(st->spw_chan_id, p_tx_transfer_op)) {
+	if (!STAR_submitTransferOperation(st->spw_chan_id[chan], p_tx_transfer_op)) {
 		printf("Error during transfer submission\n");
 		exit(EXIT_FAILURE);
 	}
@@ -343,13 +391,27 @@ void spw_send_packet(struct bridge_cfg *cfg, uint8_t *buf, size_t len)
 
 	pthread_mutex_lock(&st->pus_op_lock);
 
-	if (st->pus_tx_transfer_op == p_tx_transfer_op)
-		st->pus_tx_transfer_op = NULL;
+	if (st->pus_tx_transfer_op[chan] == p_tx_transfer_op)
+		st->pus_tx_transfer_op[chan] = NULL;
 
 	pthread_mutex_unlock(&st->pus_op_lock);
 	STAR_disposeTransferOperation(p_tx_transfer_op);
 
 	STAR_destroyStreamItem(p_tx_stream_item);
+}
+
+
+/**
+ * @brief transmit a packet on the SpaceWire link
+ *
+ * @param cfg bridge configuration
+ * @param buf packet bytes, including the leading path header
+ * @param len size of the packet in bytes
+ */
+
+void spw_send_packet(struct bridge_cfg *cfg, uint8_t *buf, size_t len)
+{
+	spw_send_packet_chan(cfg, 0, buf, len);
 }
 
 
@@ -391,7 +453,7 @@ void spw_rmap_cmd(struct bridge_cfg *cfg, uint8_t dst, uint8_t op, uint32_t addr
 		return;
 	}
 
-	transmit_status = STAR_transmitPacket(cfg->spw->spw_chan_id, pkt, (uint32_t)len,
+	transmit_status = STAR_transmitPacket(cfg->spw->spw_chan_id[0], pkt, (uint32_t)len,
 					      STAR_EOP_TYPE_EOP, 5);
 	if (transmit_status != STAR_TRANSFER_STATUS_COMPLETE)
 		printf("Error transmitting RMAP %s command\n", op ? "write" : "read");
@@ -410,8 +472,13 @@ void spw_setup_device(struct bridge_cfg *cfg)
 {
 	int ret;
 
+	uint32_t nchans;
+	uint32_t i;
+
 	struct spw_state *st;
 
+
+	nchans = cfg->enable_monitor ? 2 : 1;
 
 	st = (struct spw_state *)calloc(1, sizeof(struct spw_state));
 	if (!st) {
@@ -423,6 +490,11 @@ void spw_setup_device(struct bridge_cfg *cfg)
 
 	pthread_mutex_init(&st->pus_op_lock, NULL);
 
+	for (i = 0; i < nchans; i++) {
+		st->poll_arg[i].cfg = cfg;
+		st->poll_arg[i].chan = i;
+	}
+
 	st->dev_id = select_device(cfg->dev_num);
 
 	if (cfg->reset_dev) {
@@ -432,24 +504,52 @@ void spw_setup_device(struct bridge_cfg *cfg)
 
 	cfg->channel = select_channel(st->dev_id, cfg->channel);
 
+	if (cfg->enable_monitor) {
+		if (cfg->channel2 == cfg->channel) {
+			printf("monitor mode requires two different channels, refusing to proceed\n");
+			exit(EXIT_FAILURE);
+		}
+
+		cfg->channel2 = select_channel(st->dev_id, cfg->channel2);
+	}
+
 	set_link_speed(st->dev_id, cfg->link_id, cfg->sig_rate);
 
-	st->spw_chan_id = STAR_openChannelToLocalDevice(st->dev_id, STAR_CHANNEL_DIRECTION_INOUT, (uint8_t)cfg->channel, TRUE);
-	if (!st->spw_chan_id) {
+	if (cfg->enable_monitor)
+		set_link_speed(st->dev_id, cfg->channel2, cfg->sig_rate);
+
+	st->spw_chan_id[0] = STAR_openChannelToLocalDevice(st->dev_id, STAR_CHANNEL_DIRECTION_INOUT, (uint8_t)cfg->channel, TRUE);
+	if (!st->spw_chan_id[0]) {
 		printf("Error opening channel\n");
 		exit(EXIT_FAILURE);
 	}
 
 	printf("Selected channel %u\n", cfg->channel);
 
-	print_path(cfg->path, cfg->path_len);
+	if (cfg->enable_monitor) {
+		st->spw_chan_id[1] = STAR_openChannelToLocalDevice(st->dev_id, STAR_CHANNEL_DIRECTION_INOUT, (uint8_t)cfg->channel2, TRUE);
+		if (!st->spw_chan_id[1]) {
+			printf("Error opening channel\n");
+			exit(EXIT_FAILURE);
+		}
 
-	st->p_address = STAR_createAddress(cfg->path, cfg->path_len);
+		printf("Selected channel %u\n", cfg->channel2);
+	}
 
-	ret = pthread_create(&st->th_spw_poll, NULL, poll_spw, cfg);
-	if (ret) {
-		printf("Epic fail in pthread_create: %s\n", strerror(ret));
-		exit(EXIT_FAILURE);
+	if (cfg->enable_monitor)
+		/* monitor mode copies packets verbatim, no routing header on TX */
+		st->p_address = STAR_createAddress(cfg->path, 0);
+	else {
+		print_path(cfg->path, cfg->path_len);
+		st->p_address = STAR_createAddress(cfg->path, cfg->path_len);
+	}
+
+	for (i = 0; i < nchans; i++) {
+		ret = pthread_create(&st->th_spw_poll[i], NULL, poll_spw, &st->poll_arg[i]);
+		if (ret) {
+			printf("Epic fail in pthread_create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
 	}
 }
 
@@ -462,36 +562,10 @@ void spw_setup_device(struct bridge_cfg *cfg)
 
 void spw_start_link(struct bridge_cfg *cfg)
 {
-	U16 link_speed_u16;
+	start_link(cfg, cfg->channel, cfg->link_id);
 
-	PORT_STATUS_CONTROL port_status;
-	STAR_CFG_SPW_LINK_STATUS link_status;
-
-	struct spw_state *st;
-
-
-	st = cfg->spw;
-	/* make sure the link is running */
-	if (CFG_getPortStatusControl(st->dev_id, (U8)cfg->channel, &port_status)) {
-		printf("Failed to read port status control\n");
-		port_status = 0;
-	}
-
-	if (CFG_getSpaceWireLinkStatus(port_status, &link_status)) {
-		printf("Failed to read link status, forcing a clean slate\n");
-		memset(&link_status, 0, sizeof(link_status));
-	}
-
-	link_status.start = 1;
-	link_status.running = 1;
-
-	if (CFG_setSpaceWireLinkStatus(st->dev_id, (U8)cfg->channel, &link_status))
-		printf("Failed to set link to running state\n");
-
-	if (CFG_getMeasuredLinkSpeed(st->dev_id, (U8)cfg->link_id, &link_speed_u16))
-		printf("Failed to read measured link speed\n");
-	else
-		printf("Measured RX link speed %g Mbps\n", (double)link_speed_u16 / 10.0);
+	if (cfg->enable_monitor)
+		start_link(cfg, cfg->channel2, cfg->channel2);
 }
 
 
@@ -518,16 +592,24 @@ void spw_request_shutdown(struct bridge_cfg *cfg)
 
 void spw_stop_poll(struct bridge_cfg *cfg)
 {
+	uint32_t i;
+	uint32_t nchans;
+
+
+	nchans = cfg->enable_monitor ? 2 : 1;
+
 	cfg->spw->shutdown = true;
 
 	pthread_mutex_lock(&cfg->spw->pus_op_lock);
 
-	if (cfg->spw->pus_rx_transfer_op)
-		STAR_cancelTransferOperationWaits(cfg->spw->pus_rx_transfer_op);
+	for (i = 0; i < nchans; i++)
+		if (cfg->spw->pus_rx_transfer_op[i])
+			STAR_cancelTransferOperationWaits(cfg->spw->pus_rx_transfer_op[i]);
 
 	pthread_mutex_unlock(&cfg->spw->pus_op_lock);
 
-	pthread_join(cfg->spw->th_spw_poll, NULL);
+	for (i = 0; i < nchans; i++)
+		pthread_join(cfg->spw->th_spw_poll[i], NULL);
 }
 
 
@@ -541,15 +623,23 @@ void spw_stop_poll(struct bridge_cfg *cfg)
 
 void spw_dispose_ops(struct bridge_cfg *cfg)
 {
+	uint32_t i;
+	uint32_t nchans;
+
+
+	nchans = cfg->enable_monitor ? 2 : 1;
+
 	pthread_mutex_lock(&cfg->spw->pus_op_lock);
 
-	if (cfg->spw->pus_rx_transfer_op &&
-	    STAR_getTransferOperationStatus(cfg->spw->pus_rx_transfer_op) != STAR_TRANSFER_STATUS_CANCELLED)
-		STAR_disposeTransferOperation(cfg->spw->pus_rx_transfer_op);
+	for (i = 0; i < nchans; i++) {
+		if (cfg->spw->pus_rx_transfer_op[i] &&
+		    STAR_getTransferOperationStatus(cfg->spw->pus_rx_transfer_op[i]) != STAR_TRANSFER_STATUS_CANCELLED)
+			STAR_disposeTransferOperation(cfg->spw->pus_rx_transfer_op[i]);
 
-	if (cfg->spw->pus_tx_transfer_op &&
-	    STAR_getTransferOperationStatus(cfg->spw->pus_tx_transfer_op) != STAR_TRANSFER_STATUS_CANCELLED)
-		STAR_disposeTransferOperation(cfg->spw->pus_tx_transfer_op);
+		if (cfg->spw->pus_tx_transfer_op[i] &&
+		    STAR_getTransferOperationStatus(cfg->spw->pus_tx_transfer_op[i]) != STAR_TRANSFER_STATUS_CANCELLED)
+			STAR_disposeTransferOperation(cfg->spw->pus_tx_transfer_op[i]);
+	}
 
 	pthread_mutex_unlock(&cfg->spw->pus_op_lock);
 }
@@ -563,11 +653,18 @@ void spw_dispose_ops(struct bridge_cfg *cfg)
 
 void spw_release(struct bridge_cfg *cfg)
 {
+	uint32_t i;
+	uint32_t nchans;
+
+
+	nchans = cfg->enable_monitor ? 2 : 1;
+
 	if (cfg->spw->p_address)
 		STAR_destroyAddress(cfg->spw->p_address);
 
-	if (cfg->spw->spw_chan_id)
-		STAR_closeChannel(cfg->spw->spw_chan_id);
+	for (i = 0; i < nchans; i++)
+		if (cfg->spw->spw_chan_id[i])
+			STAR_closeChannel(cfg->spw->spw_chan_id[i]);
 
 	pthread_mutex_destroy(&cfg->spw->pus_op_lock);
 
