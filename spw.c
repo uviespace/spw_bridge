@@ -285,12 +285,15 @@ static void start_link(struct bridge_cfg *cfg, uint32_t chan, uint32_t link_id)
 {
 	U16 link_speed_u16;
 
+	int status;
+
 	PORT_STATUS_CONTROL port_status;
 	STAR_CFG_SPW_LINK_STATUS link_status;
 
 
 	/* make sure the link is running */
-	if (CFG_getPortStatusControl(cfg->spw->dev_id, (U8)chan, &port_status)) {
+	status = CFG_getPortStatusControl(cfg->spw->dev_id, (U8)chan, &port_status);
+	if (status) {
 		printf("Failed to read port status control\n");
 		port_status = 0;
 	}
@@ -303,10 +306,12 @@ static void start_link(struct bridge_cfg *cfg, uint32_t chan, uint32_t link_id)
 	link_status.start = 1;
 	link_status.running = 1;
 
-	if (CFG_setSpaceWireLinkStatus(cfg->spw->dev_id, (U8)chan, &link_status))
+	status = CFG_setSpaceWireLinkStatus(cfg->spw->dev_id, (U8)chan, &link_status);
+	if (status)
 		printf("Failed to set link to running state\n");
 
-	if (CFG_getMeasuredLinkSpeed(cfg->spw->dev_id, (U8)link_id, &link_speed_u16))
+	status = CFG_getMeasuredLinkSpeed(cfg->spw->dev_id, (U8)link_id, &link_speed_u16);
+	if (status)
 		printf("Failed to read measured link speed\n");
 	else
 		printf("Measured RX link speed %g Mbps\n", (double)link_speed_u16 / 10.0);

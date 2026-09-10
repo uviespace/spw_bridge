@@ -114,6 +114,8 @@ static int send_all(int sockfd, const uint8_t *buf, size_t len)
 
 static void set_net_recv_timeout(int sockfd)
 {
+	int ret;
+
 	struct timeval timeout;
 
 	/* inactivity-based: data flowing in clears the clock, only a socket
@@ -122,19 +124,23 @@ static void set_net_recv_timeout(int sockfd)
 	timeout.tv_sec  = NET_RECV_TIMEOUT_S;
 	timeout.tv_usec = 0;
 
-	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)))
+	ret = setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+	if (ret)
 		perror("setsockopt(SO_RCVTIMEO)");
 }
 
 
 static void set_net_send_timeout(int sockfd)
 {
+	int ret;
+
 	struct timeval timeout;
 
 	timeout.tv_sec  = NET_RECV_TIMEOUT_S;
 	timeout.tv_usec = 0;
 
-	if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)))
+	ret = setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+	if (ret)
 		perror("setsockopt(SO_SNDTIMEO)");
 }
 
