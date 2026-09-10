@@ -84,9 +84,6 @@ static int rmap_get_min_hdr_size(struct rmap_pkt *pkt)
 }
 
 
-/**** UNFINISHED INFO STUFF BELOW ******/
-
-__extension__
 static int rmap_check_status(uint8_t status)
 {
 
@@ -122,7 +119,7 @@ static int rmap_check_status(uint8_t status)
 		DBG("Reserved");
 		break;
 	case RMAP_STATUS_VERIFY_BUFFER_OVERRRUN:
-		DBG("Verify buffer overrrun");
+		DBG("Verify buffer overrun");
 		break;
 	case RMAP_STATUS_CMD_NOT_IMPL_OR_AUTH:
 		DBG("RMAP Command not implemented or not authorised");
@@ -145,90 +142,169 @@ static int rmap_check_status(uint8_t status)
 }
 
 
-static void rmap_process_write_cmd(uint8_t *pkt, size_t len)
+static void rmap_process_write_cmd(const uint8_t *pkt, size_t len)
 {
 	uint32_t i;
 
-	uint32_t addr  = 0;
+	uint32_t addr;
+	uint32_t data_len;
 
-	uint32_t data_len = 0;
+	size_t rpath_len;
+	size_t data_off;
 
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE0]) << 24;
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE1]) << 16;
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE2]) <<  8;
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE3]) <<  0;
+	struct rmap_instruction *ri;
 
 
-	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE0 + 4]) << 16;
-	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE1 + 4]) <<  8;
-	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE2 + 4]) <<  0;
+	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
 
-	DBG("CMD WR to %08x size %d bytes: ", addr, data_len);
+	/* reply address length is a number of 32 bit words */
+	rpath_len = (size_t)ri->reply_addr_len << 2;
 
-	if (data_len > len - RMAP_DATA_START - RMAP_ADDR_EXTRA_OFFSET)
-		data_len = (uint32_t)(len - RMAP_DATA_START - RMAP_ADDR_EXTRA_OFFSET);
+	/* the data field starts right after the header CRC */
+	data_off = RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET + rpath_len;
 
-	for (i = 0; i < data_len; i++)
-		DBG("%02x:", pkt[RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET + i]);
+	addr = ((uint32_t)pkt[RMAP_ADDR_BYTE0 + rpath_len] << 24) |
+	       ((uint32_t)pkt[RMAP_ADDR_BYTE1 + rpath_len] << 16) |
+	       ((uint32_t)pkt[RMAP_ADDR_BYTE2 + rpath_len] <<  8) |
+		(uint32_t)pkt[RMAP_ADDR_BYTE3 + rpath_len];
+
+	data_len = ((uint32_t)pkt[RMAP_DATALEN_BYTE0 + RMAP_ADDR_EXTRA_OFFSET + rpath_len] << 16) |
+		   ((uint32_t)pkt[RMAP_DATALEN_BYTE1 + RMAP_ADDR_EXTRA_OFFSET + rpath_len] <<  8) |
+		    (uint32_t)pkt[RMAP_DATALEN_BYTE2 + RMAP_ADDR_EXTRA_OFFSET + rpath_len];
+
+	DBG("CMD WR to %08x size %u bytes: ", addr, data_len);
+
+	if (len > data_off) {
+		if (data_len > len - data_off)
+			data_len = (uint32_t)(len - data_off);
+
+		for (i = 0; i < data_len; i++)
+			DBG("%02x:", pkt[data_off + i]);
+	}
 
 	DBG("\b \n");
 }
 
 
-static void rmap_process_read_cmd(uint8_t *pkt)
+static void rmap_process_read_cmd(const uint8_t *pkt)
 {
-	uint32_t len = 0;
-	uint32_t addr  = 0;
+	uint32_t addr;
+	uint32_t data_len;
 
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE0]) << 24;
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE1]) << 16;
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE2]) <<  8;
-	addr |= ((uint32_t)pkt[RMAP_ADDR_BYTE3]) <<  0;
+	size_t rpath_len;
+
+	struct rmap_instruction *ri;
 
 
-	len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE0 + 4]) << 16;
-	len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE1 + 4]) <<  8;
-	len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE2 + 4]) <<  0;
+	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
 
-	DBG("CMD RD from %08x size %d bytes\n", addr, len);
+	/* reply address length is a number of 32 bit words */
+	rpath_len = (size_t)ri->reply_addr_len << 2;
 
+	addr = ((uint32_t)pkt[RMAP_ADDR_BYTE0 + rpath_len] << 24) |
+	       ((uint32_t)pkt[RMAP_ADDR_BYTE1 + rpath_len] << 16) |
+	       ((uint32_t)pkt[RMAP_ADDR_BYTE2 + rpath_len] <<  8) |
+		(uint32_t)pkt[RMAP_ADDR_BYTE3 + rpath_len];
+
+	data_len = ((uint32_t)pkt[RMAP_DATALEN_BYTE0 + RMAP_ADDR_EXTRA_OFFSET + rpath_len] << 16) |
+		   ((uint32_t)pkt[RMAP_DATALEN_BYTE1 + RMAP_ADDR_EXTRA_OFFSET + rpath_len] <<  8) |
+		    (uint32_t)pkt[RMAP_DATALEN_BYTE2 + RMAP_ADDR_EXTRA_OFFSET + rpath_len];
+
+	DBG("CMD RD from %08x size %u bytes\n", addr, data_len);
 }
 
 
-static void rmap_process_read_reply(uint8_t *pkt, size_t len)
+
+static void rmap_process_rmw_cmd(const uint8_t *pkt, size_t len)
 {
 	uint32_t i;
 
-	uint32_t data_len = 0;
+	uint32_t addr;
+	uint32_t data_len;
+
+	size_t rpath_len;
+	size_t data_off;
+
+	struct rmap_instruction *ri;
 
 
-	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE0]) << 16;
-	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE1]) <<  8;
-	data_len |= ((uint32_t)pkt[RMAP_DATALEN_BYTE2]) <<  0;
+	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
+
+	/* reply address length is a number of 32 bit words */
+	rpath_len = (size_t)ri->reply_addr_len << 2;
+
+	/* the data field starts right after the header CRC */
+	data_off = RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET + rpath_len;
+
+	addr = ((uint32_t)pkt[RMAP_ADDR_BYTE0 + rpath_len] << 24) |
+	       ((uint32_t)pkt[RMAP_ADDR_BYTE1 + rpath_len] << 16) |
+	       ((uint32_t)pkt[RMAP_ADDR_BYTE2 + rpath_len] <<  8) |
+		(uint32_t)pkt[RMAP_ADDR_BYTE3 + rpath_len];
+
+	data_len = ((uint32_t)pkt[RMAP_DATALEN_BYTE0 + RMAP_ADDR_EXTRA_OFFSET + rpath_len] << 16) |
+		   ((uint32_t)pkt[RMAP_DATALEN_BYTE1 + RMAP_ADDR_EXTRA_OFFSET + rpath_len] <<  8) |
+		    (uint32_t)pkt[RMAP_DATALEN_BYTE2 + RMAP_ADDR_EXTRA_OFFSET + rpath_len];
+
+	DBG("CMD RMW at %08x length %u bytes: ", addr, data_len);
+
+	if (len > data_off) {
+		if (data_len > len - data_off)
+			data_len = (uint32_t)(len - data_off);
+
+		/* the payload is the data followed by an equally sized mask */
+		DBG("data: ");
+		for (i = 0; i < data_len / 2; i++)
+			DBG("%02x:", pkt[data_off + i]);
+
+		DBG("\b \n");
+
+		DBG("mask: ");
+		for (i = data_len / 2; i < data_len; i++)
+			DBG("%02x:", pkt[data_off + i]);
+
+		DBG("\b \n");
+	}
+}
 
 
-	DBG("RD reply size %d bytes: ", data_len);
+static void rmap_process_read_reply(const uint8_t *pkt, size_t len)
+{
+	uint32_t i;
 
-	if (data_len > len - RMAP_DATA_START)
-		data_len = (uint32_t)(len - RMAP_DATA_START);
+	uint32_t data_len;
 
-	for (i = 0; i < data_len; i++)
-		DBG("%02x:", pkt[RMAP_DATA_START + i]);
+
+	if (len < RMAP_DATALEN_BYTE2 + 1) {
+		DBG("RD reply too short (%zu bytes)\n", len);
+		return;
+	}
+
+	data_len = ((uint32_t)pkt[RMAP_DATALEN_BYTE0] << 16) |
+		   ((uint32_t)pkt[RMAP_DATALEN_BYTE1] <<  8) |
+		    (uint32_t)pkt[RMAP_DATALEN_BYTE2];
+
+	DBG("RD reply size %u bytes: ", data_len);
+
+	if (len > RMAP_DATA_START) {
+		if (data_len > len - RMAP_DATA_START)
+			data_len = (uint32_t)(len - RMAP_DATA_START);
+
+		for (i = 0; i < data_len; i++)
+			DBG("%02x:", pkt[RMAP_DATA_START + i]);
+	}
 
 	DBG("\b \n");
 }
 
 
-static void rmap_parse_cmd_pkt(uint8_t *pkt, size_t len)
+static void rmap_parse_cmd_pkt(const uint8_t *pkt, size_t len)
 {
 	struct rmap_instruction *ri;
 
 
 	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
 
-
 	switch (ri->cmd) {
-
 	case RMAP_READ_ADDR_SINGLE:
 		DBG("Read single address\n");
 		rmap_process_read_cmd(pkt);
@@ -238,28 +314,50 @@ static void rmap_parse_cmd_pkt(uint8_t *pkt, size_t len)
 		rmap_process_read_cmd(pkt);
 		break;
 	case RMAP_READ_MODIFY_WRITE_ADDR_INC:
-		rmap_process_write_cmd(pkt, len);
-		DBG("RMW incrementing address verify reply\n");
+		DBG("RMW incrementing address\n");
+		rmap_process_rmw_cmd(pkt, len);
 		break;
-	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
+	case RMAP_WRITE_ADDR_SINGLE:
+		DBG("Write single address\n");
 		rmap_process_write_cmd(pkt, len);
-		DBG("Write incrementing address verify reply\n");
+		break;
+	case RMAP_WRITE_ADDR_INC:
+		DBG("Write incrementing address\n");
+		rmap_process_write_cmd(pkt, len);
+		break;
+	case RMAP_WRITE_ADDR_SINGLE_REPLY:
+		DBG("Write single address reply\n");
+		rmap_process_write_cmd(pkt, len);
 		break;
 	case RMAP_WRITE_ADDR_INC_REPLY:
-		rmap_process_write_cmd(pkt, len);
 		DBG("Write incrementing address reply\n");
+		rmap_process_write_cmd(pkt, len);
+		break;
+	case RMAP_WRITE_ADDR_SINGLE_VERIFY:
+		DBG("Write single address verify\n");
+		rmap_process_write_cmd(pkt, len);
+		break;
+	case RMAP_WRITE_ADDR_INC_VERIFY:
+		DBG("Write incrementing address verify\n");
+		rmap_process_write_cmd(pkt, len);
+		break;
+	case RMAP_WRITE_ADDR_SINGLE_VERIFY_REPLY:
+		DBG("Write single address verify reply\n");
+		rmap_process_write_cmd(pkt, len);
+		break;
+	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
+		DBG("Write incrementing address verify reply\n");
+		rmap_process_write_cmd(pkt, len);
 		break;
 	default:
 		DBG("decoding of instruction 0x%02X not implemented\n",
 		       ri->cmd);
-		rmap_process_write_cmd(pkt, len);
 		break;
 	}
-
 }
 
 
-static void rmap_parse_reply_pkt(uint8_t *pkt, size_t len)
+static void rmap_parse_reply_pkt(const uint8_t *pkt, size_t len)
 {
 	struct rmap_instruction *ri;
 
@@ -269,23 +367,29 @@ static void rmap_parse_reply_pkt(uint8_t *pkt, size_t len)
 	DBG("\tInstruction: ");
 
 	switch (ri->cmd) {
-
 	case RMAP_READ_ADDR_SINGLE:
-		//DBG("Read single address\n");
+		DBG("Read single address reply\n");
 		rmap_process_read_reply(pkt, len);
 		break;
 	case RMAP_READ_ADDR_INC:
-		DBG("Read incrementing address\n");
+		DBG("Read incrementing address reply\n");
 		rmap_process_read_reply(pkt, len);
 		break;
 	case RMAP_READ_MODIFY_WRITE_ADDR_INC:
-		DBG("RMW incrementing address verify reply\n");
+		DBG("RMW incrementing address reply\n");
+		rmap_process_read_reply(pkt, len);
 		break;
-	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
-		DBG("Write incrementing address verify reply\n");
+	case RMAP_WRITE_ADDR_SINGLE_REPLY:
+		DBG("Write single address reply\n");
 		break;
 	case RMAP_WRITE_ADDR_INC_REPLY:
 		DBG("Write incrementing address reply\n");
+		break;
+	case RMAP_WRITE_ADDR_SINGLE_VERIFY_REPLY:
+		DBG("Write single address verify reply\n");
+		break;
+	case RMAP_WRITE_ADDR_INC_VERIFY_REPLY:
+		DBG("Write incrementing address verify reply\n");
 		break;
 	default:
 		DBG("decoding of instruction 0x%02X not implemented\n",
@@ -867,6 +971,8 @@ error:
 
 void rmap_parse_pkt(uint8_t *pkt, size_t len)
 {
+	size_t rpath_len;
+
 	struct rmap_instruction *ri;
 
 
@@ -881,21 +987,27 @@ void rmap_parse_pkt(uint8_t *pkt, size_t len)
 		return;
 	}
 
-	/* protect the sub-parser reads that access up to the datalen field
-	 * (pkt[RMAP_DATALEN_BYTE2 + RMAP_ADDR_EXTRA_OFFSET])
-	 */
-	if (len < RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET) {
-		DBG("RMAP header too short (%zu bytes, need %d)\n",
-		       len, RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET);
-		return;
-	}
-
 	ri = (struct rmap_instruction *)&pkt[RMAP_INSTRUCTION];
 	if (ri->cmd_resp) {
+		/* the reply address shifts all command header fields */
+		rpath_len = (size_t)ri->reply_addr_len << 2;
+
+		/* need at least the header + header CRC + reply address */
+		if (len < RMAP_DATA_START + RMAP_ADDR_EXTRA_OFFSET + rpath_len) {
+			DBG("RMAP command too short (%zu bytes)\n", len);
+			return;
+		}
+
 		DBG("This is a command packet\n");
 		rmap_parse_cmd_pkt(pkt, len);
 	} else {
 		DBG("This is a reply packet\n");
+
+		/* the smallest reply is a write reply without data */
+		if (len < RMAP_HDR_MIN_SIZE_WRITE_REP + 1) {
+			DBG("RMAP reply too short (%zu bytes)\n", len);
+			return;
+		}
 
 		if (!rmap_check_status(pkt[RMAP_REPLY_STATUS]))
 			rmap_parse_reply_pkt(pkt, len);
