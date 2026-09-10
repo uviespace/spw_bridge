@@ -718,7 +718,6 @@ static ssize_t recv_gresb_packet(struct net_service *svc, int sockfd, uint8_t **
 
 static void net_to_spw(struct net_service *svc, int sockfd)
 {
-	size_t i;
 	size_t packet_length;
 
 	ssize_t recv_bytes;
@@ -754,11 +753,6 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 		free(recv_buffer);
 		return;
 	}
-
-	DBG("NET->PC: ");
-	for (i = 0; i < packet_length; i++)
-		DBG("%02x", recv_buffer[i]);
-	DBG("\n");
 
 	pus_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
 
@@ -853,10 +847,7 @@ static void rmap_net_to_spw(struct net_service *svc, int sockfd)
 	}
 
 	dst = tmp[0];
-	DBG("dst: %x\n", dst);
-
 	op  = tmp[1];
-	DBG("op: %x\n", op);
 
 	addr = ((uint32_t)tmp[2]) << 24;
 	addr|= ((uint32_t)tmp[3]) << 16;

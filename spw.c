@@ -101,8 +101,6 @@ static STAR_TRANSFER_OPERATION *spw_setup_rx_op(struct bridge_cfg *cfg, uint32_t
 
 static void *poll_spw(void *ptr)
 {
-	uint32_t i;
-
 	uint32_t chan;
 
 	uint32_t spw_recv_bytes;
@@ -155,11 +153,6 @@ static void *poll_spw(void *ptr)
 		p_spw_packet = (STAR_SPACEWIRE_PACKET *) STAR_getTransferItem(p_rx_transfer_op, 0)->item;
 
 		spw_recv_buffer = STAR_getPacketData(p_spw_packet, &spw_recv_bytes);
-
-		DBG("SPW->PC: ");
-		for (i = 0; i < spw_recv_bytes; i++)
-			DBG("%02x", spw_recv_buffer[i]);
-		DBG("\n");
 
 		if (cfg->pkt_sink)
 			cfg->pkt_sink(cfg, chan, spw_recv_buffer, spw_recv_bytes);
@@ -440,9 +433,6 @@ void spw_rmap_cmd(struct bridge_cfg *cfg, uint8_t dst, uint8_t op, uint32_t addr
 
 	void *pkt;
 
-
-	DBG("Here I generate a %s packet at address %x of size %zu\n",
-	    op ? "WRITE" : "READ", addr, size);
 
 	if (op)
 		pkt = RMAP_BuildWriteCommandPacket(&dst, 1, &src, 1, 0, 0, 1, key, 0,
