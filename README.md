@@ -40,6 +40,7 @@ the program and shut down the device cleanly.
 	-L LINKID        id of the link whose speed is set (default: the channel)
 	-P               parse the network byte stream for PUS packets
 	-D               print decoded PUS-C headers and payloads (requires -P)
+	-N               suppress payload bytes in the debug printout (short form)
 	-C               disable the PUS CRC16 check
 	-F               parse the network byte stream for FEE data packets
 	-R [PORT]        enable the pseudo-RMAP service on PORT (default 2345)
@@ -73,7 +74,9 @@ counter is checked in both directions and the PUS CRC16 is verified; a failed
 check is reported on stderr, packets are never dropped. `-D` additionally
 prints a decoded CCSDS/PUS-C header and payload dump for every packet in both
 directions; the printout can be toggled on and off from the terminal with
-`d`/`D` while the bridge is running (requires stdin to be a terminal).
+`d`/`D` while the bridge is running (requires stdin to be a terminal). `-N`
+restricts the printout to the decoded header lines (no payload bytes); the
+short form is toggled with `s`/`S`.
 
 ## Monitor Mode
 
@@ -95,6 +98,11 @@ initiator addresses, transaction id, data address and length, and the header
 and data CRCs):
 
 	./spw_bridge -M 1:2 -D -E
+
+`-N` switches the printout to the short form: only the direction line (and,
+with `-E`, the decoded RMAP header line) is printed, payload bytes and the
+"not an RMAP packet" announcement are suppressed. The short form can also be
+toggled with `s`/`S` from the terminal while the bridge is running.
 
 ## Examples
 

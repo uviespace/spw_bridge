@@ -63,7 +63,7 @@
 
 \begin{versionhistory}
   \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
-  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding}
+  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression and a short debug form}
 \end{versionhistory}
 
 
@@ -236,8 +236,8 @@ The bridge consists of a small set of dedicated source files:
 	\texttt{spw\_bridge.c}	& main program: option processing, startup and shutdown \\
 	\texttt{spw\_bridge.h}	& shared configuration and subsystem interfaces \\
 	\texttt{net.c}		& network subsystem: sockets, framing, packet sink \\
-	\texttt{spw.c}		& SpaceWire subsystem: STAR API device and link handling \\
-	\texttt{kbd.c}, \texttt{kbd.h}& keyboard monitor: toggles the PUS debug printout \\
+	\texttt{spw.c}		& SpaceWire subsystem: STAR API device, link handling and the monitor mode packet sink \\
+	\texttt{kbd.c}, \texttt{kbd.h}& keyboard monitor: toggles the debug printout and the short debug form \\
 	\texttt{rmap.c}, \texttt{rmap.h}& RMAP command and reply helper functions \\
 	\texttt{gresb.c}, \texttt{gresb.h}& GRESB protocol packet helpers \\
 	\texttt{byteorder.h}	& endianness conversion macros \\
@@ -464,6 +464,7 @@ The full option set is:
 	\texttt{-L LINKID}	& id of the link whose speed is set (default: equal to the channel) \\
 	\texttt{-P}		& parse the network byte stream for \gls{PUS} packets \\
 	\texttt{-D}		& print decoded PUS-C headers and payloads (requires \texttt{-P}) \\
+	\texttt{-N}		& suppress payload bytes in the debug printout (short form) \\
 	\texttt{-C}		& disable the PUS CRC16 check (see Section~\ref{sec:puscrc}) \\
 	\texttt{-F}		& parse the network byte stream for FEE data packets \\
 	\texttt{-R [PORT]}	& enable the pseudo--\gls{RMAP} service on PORT (default 2345) \\
@@ -541,6 +542,10 @@ dump of every packet passing through the bridge, in both directions. It
 requires \texttt{-P}; once enabled, the printout can also be switched on and
 off from the keyboard while the bridge is running (see
 Section~\ref{sec:kbd}).
+\\
+\texttt{-N} restricts the printout to the decoded header lines and suppresses
+the raw payload dump. Like the printout itself, the short form can be toggled
+from the keyboard while the bridge is running (see Section~\ref{sec:kbd}).
 
 \section{Monitor Mode}
 \label{sec:monitor}
@@ -567,8 +572,11 @@ as \texttt{SPW[A]->SPW[B]} instead of the network directions, followed by a
 hex dump of the raw packet payload. With the additional \texttt{-E} option the
 packets are decoded as \gls{RMAP} and a header line is printed in front of the
 payload dump (see Section~\ref{sec:mondbg}). A packet that cannot be parsed as
-\gls{RMAP} is reported as such. No \gls{PUS} interpretation is performed on
-the monitor path, and packets are never modified by the decoding.
+\gls{RMAP} is reported as such. \texttt{-N} suppresses the payload dump (the
+short form); the direction line and, with \texttt{-E}, the decoded
+\gls{RMAP} header line are still printed. No \gls{PUS} interpretation is
+performed on the monitor path, and packets are never modified by the
+decoding.
 
 \section{Reading the Monitor Mode Printout}
 \label{sec:mondbg}
@@ -622,9 +630,12 @@ The printed fields are
 
 \noindent
 A packet that cannot be parsed as \gls{RMAP} is announced with a
-{\ttfamily not an RMAP packet} line and only its payload is dumped. The payload
-itself is formatted as in the PUS printout (Section~\ref{sec:pusdbg}): hex
-octets, sixteen per line, with an empty line closing the dump.
+{\ttfamily not an RMAP packet} line and only its payload is dumped. In the
+short form (\texttt{-N}) the payload dump is suppressed: only the time stamp,
+the direction and, with \texttt{-E}, the decoded \gls{RMAP} header line are
+printed, and a packet that is not \gls{RMAP} is not announced at all. The
+payload itself is formatted as in the PUS printout (Section~\ref{sec:pusdbg}):
+hex octets, sixteen per line, with an empty line closing the dump.
 
 \section{Keyboard Control of the Debug Printout}
 \label{sec:kbd}
@@ -634,10 +645,13 @@ terminal while the bridge is running: pressing \texttt{d} or \texttt{D} turns
 it on or off, and each change is announced on the terminal with a
 {\ttfamily PUS debug enabled} or {\ttfamily PUS debug disabled} message. This
 allows a quick look at the PUS traffic without restarting the bridge or
-resubmitting the command line. The keyboard control is handled by a dedicated
-monitor thread and requires \texttt{stdin} to be connected to a terminal; if
-the bridge runs in the background or with redirected input, the toggle is not
-available.
+resubmitting the command line. Likewise, \texttt{s} or \texttt{S} toggles the
+short form of the printout, which suppresses the payload dump; the change is
+announced with a {\ttfamily short debug form enabled} or
+{\ttfamily short debug form disabled} message. The keyboard control is handled
+by a dedicated monitor thread and requires \texttt{stdin} to be connected to a
+terminal; if the bridge runs in the background or with redirected input, the
+toggle is not available.
 
 \section{Reading the PUS Debug Printout}
 \label{sec:pusdbg}
