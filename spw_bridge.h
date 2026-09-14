@@ -70,6 +70,7 @@ struct bridge_cfg {
 	bool		enable_rmap;
 	bool		enable_gresb;
 	bool		pus_debug;
+	bool		debug_short;
 	bool		crc_check;
 	char		host[128];
 	uint8_t		path[256];
@@ -111,6 +112,22 @@ void spw_send_packet(struct bridge_cfg *cfg, uint8_t *buf, size_t len);
  */
 
 void spw_send_packet_chan(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
+			  size_t len);
+
+
+/**
+ * @brief handle a packet received on one of the two SpW links in monitor mode
+ *
+ * @param cfg the bridge configuration
+ * @param chan index of the SpW channel the packet was received on
+ * @param buf received packet bytes, including the leading path header
+ * @param len size of the packet in bytes
+ *
+ * @note the packet is copied verbatim to the other link, printed and handed
+ *	 to the observing net clients; used as the packet sink in monitor mode
+ */
+
+void spw_pkt_sink_monitor(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
 			  size_t len);
 
 
@@ -231,13 +248,28 @@ void net_pkt_sink(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf, size_t le
 
 
 /**
- * @brief print a decoded PUS-C header and payload of a packet
+ * @brief forward a packet received on the SpW link to the net clients
+ *
+ * @param cfg the bridge configuration
+ * @param buf packet bytes, a raw SpW packet or an unwrapped GRESB payload
+ * @param len size of the packet in bytes
+ */
+
+void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf,
+			    size_t len);
+
+
+/**
+ * @brief print a decoded PUS-C header and payload of a network packet
  *
  * @param cfg the bridge configuration; printing is only active when enabled
  *	      on the command line and PUS interpretation is turned on
  * @param dir direction string of the packet flow, i.e. NET->SPW or SPW->NET
  * @param pkt packet bytes at the CCSDS packet start, past any path header
  * @param len size of the packet in bytes
+ *
+ * @note monitor-mode traffic is printed by spw_pkt_sink_monitor() instead;
+ *	 the payload hex dump is suppressed when the short debug form is active
  */
 
 void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,

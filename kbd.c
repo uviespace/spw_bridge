@@ -14,7 +14,7 @@
  * more details.
  *
  * @brief terminal keyboard monitor of the SpaceWire bridge: toggles the
- *        PUS debug output when 'd' or 'D' is pressed
+ *        PUS debug output on 'd'/'D' and the short debug form on 's'/'S'
  */
 
 #include <stdbool.h>
@@ -70,11 +70,17 @@ static void *kbd_monitor(void *ptr)
 		return NULL;
 
 	while (read(STDIN_FILENO, &ch, 1) == 1) {
-		if (ch != 'd' && ch != 'D')
+		if (ch == 'd' || ch == 'D') {
+			cfg->pus_debug = !cfg->pus_debug;
+			printf("PUS debug %s\n", cfg->pus_debug ? "enabled" : "disabled");
+			continue;
+		}
+
+		if (ch != 's' && ch != 'S')
 			continue;
 
-		cfg->pus_debug = !cfg->pus_debug;
-		printf("PUS debug %s\n", cfg->pus_debug ? "enabled" : "disabled");
+		cfg->debug_short = !cfg->debug_short;
+		printf("short debug form %s\n", cfg->debug_short ? "enabled" : "disabled");
 	}
 
 	kbd_restore_term();
@@ -86,8 +92,8 @@ static void *kbd_monitor(void *ptr)
 /**
  * @brief start the keyboard monitor
  *
- * @param cfg the bridge configuration; the PUS debug flag is toggled when
- *	      the user presses 'd' or 'D'
+ * @param cfg the bridge configuration; the PUS debug flag is toggled on
+ *	      'd'/'D' and the short debug form on 's'/'S'
  *
  * @note the monitor thread is detached, only acts when stdin is connected
  *	 to a terminal, and restores the terminal settings on exit

@@ -986,7 +986,57 @@ static void check_pus_sequence(struct bridge_cfg *cfg, const uint8_t *buf, size_
 }
 
 
-static void forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t len)
+/**
+ * @brief handle a complete packet received on the SpW link
+ *
+ * @param cfg the bridge configuration
+ * @param buf received packet bytes, including the leading path header
+ * @param len size of the packet in bytes
+ */
+
+void net_pkt_sink(struct bridge_cfg *cfg, __attribute__((unused)) uint32_t chan,
+		  uint8_t *buf, size_t len)
+{
+	if (len <= cfg->skip_header_bytes) {
+		printf("skip_header_bytes is %zu, dropping packet\n", cfg->skip_header_bytes);
+		return;
+	}
+
+	pus_debug_print(cfg, "SPW->NET",
+			buf + cfg->skip_header_bytes, len - cfg->skip_header_bytes);
+
+	if (cfg->interpret_pus)
+		if (cfg->crc_check &&
+		    !pus_pkt_crc_valid(buf + cfg->skip_header_bytes,
+				       len - cfg->skip_header_bytes))
+			fprintf(stderr, "CRC error on SPW->NET packet\n");
+
+	rmap_parse_pkt(buf + cfg->skip_header_bytes, len - cfg->skip_header_bytes);
+
+	if (cfg->enable_rmap &&
+	    len > cfg->skip_header_bytes + 1 &&
+	    buf[cfg->skip_header_bytes + 1] == 0x1) {
+		rmap_reply_to_clients(cfg, buf, len);
+		return;
+	}
+
+	if (cfg->interpret_pus)
+		check_pus_sequence(cfg, buf, len);
+
+	net_forward_to_clients(cfg, buf + cfg->skip_header_bytes,
+			   len - cfg->skip_header_bytes);
+}
+
+
+/**
+ * @brief forward a packet received on the SpW link to the net clients
+ *
+ * @param cfg the bridge configuration
+ * @param buf packet bytes, a raw SpW packet or an unwrapped GRESB payload
+ * @param len size of the packet in bytes
+ */
+
+void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t len)
 {
 	int fd;
 
@@ -1045,72 +1095,6 @@ static void forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_
 
 	if (cfg->enable_gresb)
 		gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
-}
-
-
-/**
- * @brief handle a complete packet received on the SpW link
- *
- * @param cfg the bridge configuration
- * @param buf received packet bytes, including the leading path header
- * @param len size of the packet in bytes
- */
-
-void net_pkt_sink(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf, size_t len)
-{
-	char dir[64];
-
-	uint32_t other;
-
-	if (cfg->enable_monitor) {
-		/* monitor mode: copy the packet verbatim to the other link and
-		 * hand the plain bytes to the clients for observation; nothing
-		 * is routed, interpreted or stripped on the way
-		 */
-		other = 1 - chan;
-
-		snprintf(dir, sizeof(dir), "SPW[%u]->SPW[%u]",
-			 chan == 0 ? cfg->channel : cfg->channel2,
-			 chan == 0 ? cfg->channel2 : cfg->channel);
-
-		pus_debug_print(cfg, dir, buf, len);
-
-		if (spw_link_ready(cfg))
-			spw_send_packet_chan(cfg, other, buf, len);
-
-		forward_to_clients(cfg, buf, len);
-
-		return;
-	}
-
-	if (len <= cfg->skip_header_bytes) {
-		printf("skip_header_bytes is %zu, dropping packet\n", cfg->skip_header_bytes);
-		return;
-	}
-
-	pus_debug_print(cfg, "SPW->NET",
-			buf + cfg->skip_header_bytes, len - cfg->skip_header_bytes);
-
-	if (cfg->interpret_pus)
-		if (cfg->crc_check &&
-		    !pus_pkt_crc_valid(buf + cfg->skip_header_bytes,
-				       len - cfg->skip_header_bytes))
-			fprintf(stderr, "CRC error on SPW->NET packet\n");
-
-	rmap_parse_pkt(buf + cfg->skip_header_bytes, len - cfg->skip_header_bytes);
-
-	if (cfg->enable_rmap &&
-	    len > cfg->skip_header_bytes + 1 &&
-	    buf[cfg->skip_header_bytes + 1] == 0x1) {
-		rmap_reply_to_clients(cfg, buf, len);
-		return;
-	}
-
-	if (cfg->interpret_pus)
-		check_pus_sequence(cfg, buf, len);
-
-	forward_to_clients(cfg, buf + cfg->skip_header_bytes,
-			   len - cfg->skip_header_bytes);
 }
 
 

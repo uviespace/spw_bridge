@@ -85,6 +85,7 @@ static void print_usage(const char *prog, struct bridge_cfg *cfg)
 	printf("  -L LINKID                 id of link to set speed for; needed with Brick Mk2 port 2; (default link_id = channel). \n");
 	printf("  -P                        parse network byte stream for PUS packets\n");
 	printf("  -D                        print decoded PUS-C packet headers and payload (requires -P; PUS-C types only)\n");
+	printf("  -N                        suppress payload bytes in the debug printout (short form)\n");
 	printf("  -C                        disable the PUS CRC16 check (PUS packets always carry a CRC16 per ECSS-E-ST-70-41C, disable only for tailored streams without one)\n");
 	printf("  -F                        parse network byte stream for FEE data packets\n");
 	printf("  -R RMAP_PORT              exchange RMAP via RMAP_PORT\n");
@@ -189,6 +190,7 @@ static void bridge_cfg_init(struct bridge_cfg *cfg)
 	cfg->enable_rmap = false;
 	cfg->enable_gresb = false;
 	cfg->pus_debug = false;
+	cfg->debug_short = false;
 	cfg->crc_check = true;
 	snprintf(cfg->host, sizeof(cfg->host), "%s", DEFAULT_ADDR);
 }
@@ -316,6 +318,12 @@ static void opt_pus_debug(struct bridge_cfg *cfg)
 }
 
 
+static void opt_short_debug(struct bridge_cfg *cfg)
+{
+	cfg->debug_short = true;
+}
+
+
 static void opt_no_crc(struct bridge_cfg *cfg)
 {
 	cfg->crc_check = false;
@@ -419,7 +427,7 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 	int opt;
 
 
-	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:uCDPFGXRM:Eh")) != -1) {
+	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:uCDPFGXRM:ENh")) != -1) {
 		switch (opt) {
 		case 'i':
 			opt_dev_num(cfg);
@@ -457,6 +465,9 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 		case 'D':
 			opt_pus_debug(cfg);
 			break;
+		case 'N':
+			opt_short_debug(cfg);
+			break;
 		case 'C':
 			opt_no_crc(cfg);
 			break;
@@ -491,55 +502,6 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 }
 
 
-static void pus_debug_print_monitor(struct bridge_cfg *cfg, const uint8_t *pkt,
-				    size_t len)
-{
-	size_t i;
-
-	struct rmap_pkt *rmap_pkt;
-
-
-	/* monitor mode: no PUS framing is expected on the copied packets,
-	 * optionally decode them as RMAP, otherwise show the raw payload
-	 */
-	if (cfg->interpret_rmap) {
-		rmap_pkt = rmap_pkt_from_buffer((uint8_t *)pkt, len);
-		if (!rmap_pkt) {
-			printf("  not an RMAP packet\n");
-		} else {
-			printf("  RMAP: %s %s dst=0x%02x key=0x%02x "
-			       "src=0x%02x tr_id=%u addr=0x%08x "
-			       "data_len=%u hdr_crc=0x%02x data_crc=0x%02x\n",
-			       rmap_pkt->ri.cmd_resp ? "CMD" : "REPLY",
-			       (rmap_pkt->ri.cmd & RMAP_CMD_BIT_WRITE) ? "WRITE" : "READ",
-			       (uint32_t)rmap_pkt->dst,
-			       (uint32_t)rmap_pkt->key,
-			       (uint32_t)rmap_pkt->src,
-			       (uint32_t)rmap_pkt->tr_id,
-			       (uint32_t)rmap_pkt->addr,
-			       (uint32_t)rmap_pkt->data_len,
-			       (uint32_t)rmap_pkt->hdr_crc,
-			       (uint32_t)rmap_pkt->data_crc);
-
-			rmap_erase_packet(rmap_pkt);
-		}
-	}
-
-	printf("  payload (%zu bytes):\n", len);
-	for (i = 0; i < len; i++) {
-		printf("%02x ", (uint32_t)pkt[i]);
-
-		if ((i & 0xf) == 0xf)
-			printf("\n");
-	}
-
-	if (len && (len & 0xf))
-		printf("\n");
-
-	printf("\n");
-}
-
-
 void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,
 		     size_t len)
 {
@@ -564,7 +526,7 @@ void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 	if (!cfg->pus_debug)
 		return;
 
-	if (!cfg->enable_monitor && !cfg->interpret_pus)
+	if (!cfg->interpret_pus)
 		return;
 
 	clock_gettime(CLOCK_REALTIME, &now);
@@ -572,11 +534,6 @@ void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 	localtime_r(&now.tv_sec, &tmv);
 	strftime(tsbuf, sizeof(tsbuf), "%F %T", &tmv);
 	printf("[%s.%03u] %s\n", tsbuf, ms, dir);
-
-	if (cfg->enable_monitor) {
-		pus_debug_print_monitor(cfg, pkt, len);
-		return;
-	}
 
 	if (len < 6) {
 		printf("  short packet (%zu bytes), not a CCSDS packet\n", len);
@@ -638,6 +595,11 @@ void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 
 	if (cfg->crc_check)
 		printf("  CRC=%s\n", pus_pkt_crc_valid((uint8_t *)pkt, len) ? "OK" : "NOK");
+
+	if (cfg->debug_short) {
+		printf("\n");
+		return;
+	}
 
 	pld_len = ecss_get_pld_size((uint8_t *)pkt);
 	pld_off = ecss_get_payload_offset((uint8_t *)pkt) / 8;
@@ -717,7 +679,10 @@ int main(int argc, char **argv)
 
 	crc_init_lookup_table();
 
-	cfg.pkt_sink = net_pkt_sink;
+	if (cfg.enable_monitor)
+		cfg.pkt_sink = spw_pkt_sink_monitor;
+	else
+		cfg.pkt_sink = net_pkt_sink;
 
 	net_start(&cfg);
 

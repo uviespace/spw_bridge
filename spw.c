@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include <unistd.h>
+#include <time.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -163,6 +164,71 @@ static void *poll_spw(void *ptr)
 	 * has been joined; a cancelled operation is freed by the API already
 	 */
 	return NULL;
+}
+
+
+static void spw_debug_print_monitor(struct bridge_cfg *cfg, const char *dir,
+				    const uint8_t *pkt, size_t len)
+{
+	uint32_t ms;
+	size_t i;
+
+	struct timespec now;
+	struct tm tmv;
+
+	struct rmap_pkt *rmap_pkt;
+
+	char tsbuf[64];
+
+
+	if (!cfg->pus_debug)
+		return;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	ms = (uint32_t)(now.tv_nsec / 1000000);
+	localtime_r(&now.tv_sec, &tmv);
+	strftime(tsbuf, sizeof(tsbuf), "%F %T", &tmv);
+	printf("[%s.%03u] %s\n", tsbuf, ms, dir);
+
+	if (cfg->interpret_rmap) {
+		rmap_pkt = rmap_pkt_from_buffer((uint8_t *)pkt, len);
+		if (!rmap_pkt) {
+			if (!cfg->debug_short)
+				printf("  not an RMAP packet\n");
+		} else {
+			printf("  RMAP: %s %s dst=0x%02x key=0x%02x "
+			       "src=0x%02x tr_id=%u addr=0x%08x "
+			       "data_len=%u hdr_crc=0x%02x data_crc=0x%02x\n",
+			       rmap_pkt->ri.cmd_resp ? "CMD" : "REPLY",
+			       (rmap_pkt->ri.cmd & RMAP_CMD_BIT_WRITE) ? "WRITE" : "READ",
+			       (uint32_t)rmap_pkt->dst,
+			       (uint32_t)rmap_pkt->key,
+			       (uint32_t)rmap_pkt->src,
+			       (uint32_t)rmap_pkt->tr_id,
+			       (uint32_t)rmap_pkt->addr,
+			       (uint32_t)rmap_pkt->data_len,
+			       (uint32_t)rmap_pkt->hdr_crc,
+			       (uint32_t)rmap_pkt->data_crc);
+
+			rmap_erase_packet(rmap_pkt);
+		}
+	}
+
+	if (cfg->debug_short)
+		return;
+
+	printf("  payload (%zu bytes):\n", len);
+	for (i = 0; i < len; i++) {
+		printf("%02x ", (uint32_t)pkt[i]);
+
+		if ((i & 0xf) == 0xf)
+			printf("\n");
+	}
+
+	if (len && (len & 0xf))
+		printf("\n");
+
+	printf("\n");
 }
 
 
@@ -335,6 +401,41 @@ bool spw_link_ready(struct bridge_cfg *cfg)
 		return cfg->spw->spw_chan_id[0] && cfg->spw->spw_chan_id[1];
 
 	return cfg->spw->spw_chan_id[0] != 0;
+}
+
+
+/**
+ * @brief handle a packet received on one of the two SpW links in monitor mode
+ *
+ * @param cfg the bridge configuration
+ * @param chan index of the SpW channel the packet was received on
+ * @param buf received packet bytes, including the leading path header
+ * @param len size of the packet in bytes
+ *
+ * @note the packet is copied verbatim to the other link, printed and handed
+ *	 to the observing net clients; used as the packet sink in monitor mode
+ */
+
+void spw_pkt_sink_monitor(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
+			  size_t len)
+{
+	uint32_t other;
+
+	char dir[64];
+
+
+	other = 1 - chan;
+
+	snprintf(dir, sizeof(dir), "SPW[%u]->SPW[%u]",
+		 chan == 0 ? cfg->channel : cfg->channel2,
+		 chan == 0 ? cfg->channel2 : cfg->channel);
+
+	spw_debug_print_monitor(cfg, dir, buf, len);
+
+	if (spw_link_ready(cfg))
+		spw_send_packet_chan(cfg, other, buf, len);
+
+	net_forward_to_clients(cfg, buf, len);
 }
 
 

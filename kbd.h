@@ -2,7 +2,7 @@
  * @file kbd.h
  *
  * @brief public interface of the keyboard monitor: toggles the PUS debug
- *        output when 'd' or 'D' is pressed
+ *        output on 'd'/'D' and the short debug form on 's'/'S'
  */
 
 #ifndef KBD_H
@@ -14,8 +14,8 @@
 /**
  * @brief start the keyboard monitor
  *
- * @param cfg the bridge configuration; the PUS debug flag is toggled when
- *	      the user presses 'd' or 'D'
+ * @param cfg the bridge configuration; the PUS debug flag is toggled on
+ *	      'd'/'D' and the short debug form on 's'/'S'
  *
  * @note the monitor thread is detached, only acts when stdin is connected
  *	 to a terminal, and restores the terminal settings on exit
