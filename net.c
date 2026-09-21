@@ -38,6 +38,8 @@
 
 #include <byteorder.h>
 
+#include <ccsds_pkt.h>
+
 #include <spw_bridge.h>
 #include <rmap.h>
 #include <gresb.h>
@@ -74,12 +76,21 @@ struct net_service {
 };
 
 
+/* per-APID CCSDS sequence counters, the next expected value per APID */
+struct pus_seq {
+	uint16_t apid;
+	uint16_t next;
+};
+
+
 struct net_state {
 	struct bridge_cfg	*cfg;
 	bool			is_client;
 	int			client_sock;
-	uint16_t		pus_seq_tx;
-	uint16_t		pus_seq_rx;
+	struct pus_seq		*pus_seq_tx;
+	size_t			pus_seq_tx_n;
+	struct pus_seq		*pus_seq_rx;
+	size_t			pus_seq_rx_n;
 	pthread_t		th_main;	/* accept in server mode, poll in client mode */
 	pthread_t		th_poll;
 	pthread_t		th_rmap_accept;
@@ -454,9 +465,68 @@ static void rmap_conn_drop_locked(struct net_service *svc, int sockfd, bool erro
 }
 
 
+static void check_pus_sequence(struct bridge_cfg *cfg, const char *dir,
+			       const uint8_t *pkt, size_t len,
+			       struct pus_seq **seq, size_t *n)
+{
+	uint16_t apid;
+	uint16_t sctr;
+
+	uint32_t ms;
+
+	size_t i;
+
+	struct timespec now;
+	struct tm tmv;
+
+	struct pus_seq *tmp;
+
+	char tsbuf[64];
+
+
+	if (len < SPP_PKT_HDR_LEN)
+		return;
+
+	apid = ccsds_get_apid((uint8_t *)pkt);
+	sctr = ccsds_get_seq_cnt((uint8_t *)pkt);
+
+	for (i = 0; i < (*n); i++)
+		if ((*seq)[i].apid == apid)
+			break;
+
+	/* an untracked APID starts fresh at the received value plus one */
+	if (i == (*n)) {
+		tmp = (struct pus_seq *)realloc((*seq), ((*n) + 1) * sizeof(struct pus_seq));
+		if (!tmp) {
+			fprintf(stderr, "Error tracking PUS sequence counters\n");
+			return;
+		}
+
+		(*seq) = tmp;
+		(*seq)[i].apid = apid;
+		(*seq)[i].next = (sctr + 1) & 0x3fff;
+		return;
+	}
+
+	if (sctr != (*seq)[i].next) {
+		if (cfg->pus_debug) {
+			clock_gettime(CLOCK_REALTIME, &now);
+			ms = (uint32_t)(now.tv_nsec / 1000000);
+			localtime_r(&now.tv_sec, &tmv);
+			strftime(tsbuf, sizeof(tsbuf), "%F %T", &tmv);
+			printf("[%s.%03u] %s\n", tsbuf, ms, dir);
+			printf("  sequence error: expected %u, received %u (APID=0x%03X)\n",
+			       (uint32_t)(*seq)[i].next, (uint32_t)sctr,
+			       (uint32_t)apid);
+		}
+	}
+
+	(*seq)[i].next = (sctr + 1) & 0x3fff;
+}
+
+
 static ssize_t recv_pus_packet(struct net_service *svc, int sockfd, uint8_t **buf, size_t *len)
 {
-	uint16_t sctr;
 	ssize_t recv_bytes;
 	size_t packet_length;
 
@@ -493,13 +563,11 @@ static ssize_t recv_pus_packet(struct net_service *svc, int sockfd, uint8_t **bu
 		return -1;
 	}
 
-	sctr = (((uint16_t)(*buf)[2] << 8) | (*buf)[3]) & 0x3fff;
-	if (sctr != svc->state->pus_seq_tx)
-		fprintf(stderr, "Sequence expected: %d is: %d\n", svc->state->pus_seq_tx, sctr);
-
-	svc->state->pus_seq_tx = (sctr + 1) & 0x3fff;
-
 	cfg = svc->state->cfg;
+
+	check_pus_sequence(cfg, "NET->SPW", (*buf), packet_length,
+			   &svc->state->pus_seq_tx, &svc->state->pus_seq_tx_n);
+
 	if (cfg->crc_check)
 		if (!pus_pkt_crc_valid((*buf), packet_length))
 			fprintf(stderr, "CRC error on NET->SPW packet\n");
@@ -969,23 +1037,6 @@ static void rmap_reply_to_clients(struct bridge_cfg *cfg, uint8_t *buf, size_t l
 }
 
 
-static void check_pus_sequence(struct bridge_cfg *cfg, const uint8_t *buf, size_t len)
-{
-	uint16_t sctr;
-
-	if (len < 8)
-		return;
-
-	/* the counter sits two bytes into the CCSDS packet, after any skipped header */
-	sctr = (((uint16_t)buf[cfg->skip_header_bytes + 2] << 8) |
-		buf[cfg->skip_header_bytes + 3]) & 0x3fff;
-	if (sctr != cfg->net->pus_seq_rx)
-		fprintf(stderr, "Sequence expected: %d is: %d\n", cfg->net->pus_seq_rx, sctr);
-
-	cfg->net->pus_seq_rx = (sctr + 1) & 0x3fff;
-}
-
-
 /**
  * @brief handle a complete packet received on the SpW link
  *
@@ -1021,7 +1072,9 @@ void net_pkt_sink(struct bridge_cfg *cfg, __attribute__((unused)) uint32_t chan,
 	}
 
 	if (cfg->interpret_pus)
-		check_pus_sequence(cfg, buf, len);
+		check_pus_sequence(cfg, "SPW->NET", buf + cfg->skip_header_bytes,
+				   len - cfg->skip_header_bytes,
+				   &cfg->net->pus_seq_rx, &cfg->net->pus_seq_rx_n);
 
 	net_forward_to_clients(cfg, buf + cfg->skip_header_bytes,
 			   len - cfg->skip_header_bytes);
@@ -1121,9 +1174,6 @@ void net_start(struct bridge_cfg *cfg)
 
 	cfg->net = st;
 	st->cfg = cfg;
-
-	st->pus_seq_tx = 1;
-	st->pus_seq_rx = 1;
 
 	pthread_mutex_init(&st->data.lock, NULL);
 	pthread_mutex_init(&st->rmap.lock, NULL);

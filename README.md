@@ -70,8 +70,9 @@ one per node (e.g. `01:24:00:00:00`); out-of-range values are truncated to
 ## PUS Mode
 
 With `-P` the network stream is framed as PUS packets, the CCSDS sequence
-counter is checked in both directions and the PUS CRC16 is verified; a failed
-check is reported on stderr, packets are never dropped. `-D` additionally
+counter is checked per APID in both directions and the PUS CRC16 is verified; a failed
+CRC check is reported on stderr, a sequence mismatch is reported in the `-D`
+debug printout. Packets are never dropped. `-D` additionally
 prints a decoded CCSDS/PUS-C header and payload dump for every packet in both
 directions; the printout can be toggled on and off from the terminal with
 `d`/`D` while the bridge is running (requires stdin to be a terminal). `-N`

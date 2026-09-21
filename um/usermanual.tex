@@ -63,7 +63,7 @@
 
 \begin{versionhistory}
   \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
-  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression and a short debug form}
+  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form and sequence checking in the debug printout}
 \end{versionhistory}
 
 
@@ -524,9 +524,12 @@ use one of the packet modes:
 
 \item \texttt{-P} frames the stream as \gls{PUS} packets, checks the CCSDS
 sequence counter in both directions and verifies the PUS CRC16 (see
-Section~\ref{sec:puscrc}). Sequence mismatches are reported to
-{\ttfamily stderr}, together with the expected and received counter
-values.\\
+Section~\ref{sec:puscrc}). The next expected value is tracked per APID and
+always advances to the received value plus one (with wrap-around at 14 bits);
+a previously unseen APID starts tracking at the received value plus one. A
+sequence mismatch is reported together with the expected and received counter
+values in the PUS debug printout (Section~\ref{sec:pusdbg}) and is only shown
+when \texttt{-D} is active.\\
 
 \item \texttt{-F} frames the stream as FEE data packets (protocol identifier
 \texttt{0xF0}). All other packets fall back to raw framing.\\
