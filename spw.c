@@ -379,10 +379,7 @@ void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 
 	if (cfg->interpret_rmap) {
 		rmap_pkt = rmap_pkt_from_buffer((uint8_t *)pkt, len);
-		if (!rmap_pkt) {
-			if (!cfg->debug_short)
-				printf("  not an RMAP packet\n");
-		} else {
+		if (rmap_pkt) {
 			printf("  RMAP: %s %s dst=0x%02x key=0x%02x "
 			       "src=0x%02x tr_id=%u addr=0x%08x "
 			       "data_len=%u hdr_crc=0x%02x data_crc=0x%02x\n",
