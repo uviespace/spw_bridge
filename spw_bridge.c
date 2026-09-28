@@ -56,6 +56,7 @@
 
 #include <spw_bridge.h>
 #include <debug.h>
+#include <gresb.h>
 #include <kbd.h>
 
 #include <ccsds_pkt.h>
@@ -91,7 +92,8 @@ static void print_usage(const char *prog, struct bridge_cfg *cfg)
 	printf("  -R RMAP_PORT              exchange RMAP via RMAP_PORT\n");
 	printf("  -M CHANNEL1:CHANNEL2     monitor mode: bridge the given SpW channels, copying packets verbatim between them\n");
 	printf("  -E                        decode RMAP packets in the debug printout (requires -M or -G and -D)\n");
-	printf("  -G                        use GRESB protocol for network exchange\n");
+	printf("  -G [LINKID]               use GRESB protocol, opening the virtual link TX/RX ports (default link 0), use e.g. -G3\n");
+	printf("  -W [FORMAT]               sniff all bridge traffic on the traffic sniffer port %u (bare -W: raw stream, -Wg: wrap each packet in a GRESB container)\n", (uint32_t)GRESB_SNIFF_PORT);
 	printf("  -X                        execute a device reset\n");
 	printf("  -h, --help                print this help and exit\n");
 	printf("\n");
@@ -176,6 +178,7 @@ static void bridge_cfg_init(struct bridge_cfg *cfg)
 	cfg->rmap_port = DEFAULT_RMAP_PORT;
 	cfg->channel = DEFAULT_CHAN;
 	cfg->link_id = cfg->channel;
+	cfg->gresb_link = 0;
 	cfg->dev_num = 0;
 	cfg->reset_dev = false;
 	cfg->sig_rate = DEFAULT_LINK_SPEED;
@@ -189,6 +192,8 @@ static void bridge_cfg_init(struct bridge_cfg *cfg)
 	cfg->channel2 = 0;
 	cfg->enable_rmap = false;
 	cfg->enable_gresb = false;
+	cfg->enable_sniff = false;
+	cfg->sniff_gresb = false;
 	cfg->pus_debug = false;
 	cfg->debug_short = false;
 	cfg->crc_check = true;
@@ -338,7 +343,37 @@ static void opt_fee(struct bridge_cfg *cfg)
 
 static void opt_gresb(struct bridge_cfg *cfg)
 {
+	long link;
+
+	char *endp;
+
+	if (optarg) {
+		link = strtol(optarg, &endp, 0);
+		if ((*endp) != '\0' || link < 0 || link > GRESB_VLINK_MAX) {
+			printf("error: -G requires a virtual link id 0-%d, use -G3\n",
+			       GRESB_VLINK_MAX);
+			exit(EXIT_FAILURE);
+		}
+
+		cfg->gresb_link = (uint32_t)link;
+	}
+
 	cfg->enable_gresb = true;
+}
+
+
+static void opt_sniff(struct bridge_cfg *cfg)
+{
+	if (optarg) {
+		if (strcmp(optarg, "g")) {
+			printf("error: -W only accepts format 'g' for the GRESB container, use -Wg\n");
+			exit(EXIT_FAILURE);
+		}
+
+		cfg->sniff_gresb = true;
+	}
+
+	cfg->enable_sniff = true;
 }
 
 
@@ -427,7 +462,7 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 	int opt;
 
 
-	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:uCDPFGXRM:ENh")) != -1) {
+	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:uCDPFG::XRM:ENhW::")) != -1) {
 		switch (opt) {
 		case 'i':
 			opt_dev_num(cfg);
@@ -491,6 +526,10 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 			break;
 		case 'X':
 			opt_reset(cfg);
+			break;
+
+		case 'W':
+			opt_sniff(cfg);
 			break;
 
 		case 'h':

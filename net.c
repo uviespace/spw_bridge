@@ -99,10 +99,13 @@ struct net_state {
 	pthread_t		th_gresb_tx_poll;
 	pthread_t		th_gresb_rx_accept;
 	pthread_t		th_gresb_rx_poll;
+	pthread_t		th_sniff_accept;
+	pthread_t		th_sniff_poll;
 	struct net_service	data;
 	struct net_service	rmap;
 	struct net_service	gresb_tx;
 	struct net_service	gresb_rx;
+	struct net_service	sniff;
 };
 
 
@@ -796,6 +799,47 @@ static ssize_t recv_gresb_packet(struct net_service *svc, int sockfd, uint8_t **
 }
 
 
+static void sniff_push(struct bridge_cfg *cfg, const uint8_t *buf, size_t len)
+{
+	int fd;
+
+	uint8_t *out;
+
+	struct net_service *svc;
+
+
+	svc = &cfg->net->sniff;
+
+	/* the sniff port is only opened when the option is given */
+	if (!svc->sock_fd)
+		return;
+
+	out = NULL;
+
+	if (cfg->sniff_gresb) {
+		out = gresb_create_host_data_pkt(buf, len);
+		if (!out) {
+			printf("Error creating GRESB packet, dropping the sniffed packet\n");
+			return;
+		}
+	}
+
+	pthread_mutex_lock(&svc->lock);
+	for (fd = 0; fd < svc->nfds; fd++) {
+		if (!FD_ISSET(fd, &svc->conn_set))
+			continue;
+
+		if (send_all(fd, out ? out : buf,
+			     out ? gresb_get_host_data_pkt_size(out) : len) == -1)
+			conn_drop_locked(svc, fd, 1);
+	}
+	pthread_mutex_unlock(&svc->lock);
+
+	if (out)
+		gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)out);
+}
+
+
 static void net_to_spw(struct net_service *svc, int sockfd)
 {
 	size_t packet_length;
@@ -822,6 +866,8 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 		recv_bytes = recv_raw_packet(svc, sockfd, &recv_buffer, &packet_length);
 	if (recv_bytes < 0)
 		return;
+
+	sniff_push(cfg, recv_buffer, packet_length);
 
 	if (cfg->mode == MODE_DGRAM)
 		dgram_add_client(svc, &client);
@@ -1063,6 +1109,8 @@ static void gresb_tx_to_spw(struct net_service *svc, int sockfd)
 	if (recv_bytes < 0)
 		return;
 
+	sniff_push(cfg, recv_buffer, packet_length);
+
 	if (cfg->enable_monitor) {
 		/* monitor mode: the network side only observes and sends, anything
 		 * received from the net is discarded to keep the links untouched
@@ -1213,6 +1261,8 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t l
 
 	svc = &cfg->net->data;
 
+	sniff_push(cfg, buf, len);
+
 	gresb_pkt = NULL;
 
 	if (cfg->mode == MODE_DGRAM) {
@@ -1362,12 +1412,12 @@ void net_start(struct bridge_cfg *cfg)
 		pthread_mutex_init(&st->gresb_tx.lock, NULL);
 		pthread_mutex_init(&st->gresb_rx.lock, NULL);
 
-		snprintf(url, sizeof(url), "%s:%u", cfg->host,
-			 GRESB_VLINK_TX(0));
+		snprintf(url, sizeof(url), "%s:%d", cfg->host,
+		 gresb_get_virtual_link_tx_port(cfg->gresb_link));
 		st->gresb_tx.sock_fd = bind_server_socket(url, &st->gresb_tx.conn_set);
 
-		snprintf(url, sizeof(url), "%s:%u", cfg->host,
-			 GRESB_VLINK_RX(0));
+		snprintf(url, sizeof(url), "%s:%d", cfg->host,
+			 gresb_get_virtual_link_rx_port(cfg->gresb_link));
 		st->gresb_rx.sock_fd = bind_server_socket(url, &st->gresb_rx.conn_set);
 
 		if ((ret = pthread_create(&st->th_gresb_tx_accept, NULL,
@@ -1394,7 +1444,34 @@ void net_start(struct bridge_cfg *cfg)
 			exit(EXIT_FAILURE);
 		}
 
-		printf("Started GRESB virtual link 0 server\n");
+		printf("Started GRESB virtual link %u server\n", cfg->gresb_link);
+	}
+
+	if (cfg->enable_sniff) {
+
+		st->sniff.state = st;
+		st->sniff.handle_pkt = gresb_rx_discard;
+
+		pthread_mutex_init(&st->sniff.lock, NULL);
+
+		snprintf(url, sizeof(url), "%s:%u",
+			 cfg->mode == MODE_CLIENT ? DEFAULT_ADDR : cfg->host,
+			 (uint32_t)GRESB_SNIFF_PORT);
+		st->sniff.sock_fd = bind_server_socket(url, &st->sniff.conn_set);
+
+		if ((ret = pthread_create(&st->th_sniff_accept, NULL,
+					  accept_connections, &st->sniff))) {
+			printf("Epic fail in pthread_create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
+
+		if ((ret = pthread_create(&st->th_sniff_poll, NULL,
+					  poll_socket, &st->sniff))) {
+			printf("Epic fail in pthread_create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
+
+		printf("Started sniffer on port %u\n", (uint32_t)GRESB_SNIFF_PORT);
 	}
 
 	if (cfg->enable_rmap) {
@@ -1447,6 +1524,11 @@ void net_stop(struct bridge_cfg *cfg)
 		pthread_cancel(st->th_gresb_rx_poll);
 	}
 
+	if (cfg->enable_sniff) {
+		pthread_cancel(st->th_sniff_accept);
+		pthread_cancel(st->th_sniff_poll);
+	}
+
 	if (st->data.sock_fd)
 		close(st->data.sock_fd);
 
@@ -1459,6 +1541,11 @@ void net_stop(struct bridge_cfg *cfg)
 
 		if (st->gresb_rx.sock_fd)
 			close(st->gresb_rx.sock_fd);
+	}
+
+	if (cfg->enable_sniff) {
+		if (st->sniff.sock_fd)
+			close(st->sniff.sock_fd);
 	}
 
 	if (st->client_sock)
@@ -1483,6 +1570,11 @@ void net_stop(struct bridge_cfg *cfg)
 		pthread_join(st->th_gresb_rx_accept, NULL);
 		pthread_join(st->th_gresb_rx_poll, NULL);
 	}
+
+	if (cfg->enable_sniff) {
+		pthread_join(st->th_sniff_accept, NULL);
+		pthread_join(st->th_sniff_poll, NULL);
+	}
 }
 
 
@@ -1506,6 +1598,12 @@ void net_release(struct bridge_cfg *cfg)
 
 		free(cfg->net->gresb_tx.clients);
 		free(cfg->net->gresb_rx.clients);
+	}
+
+	if (cfg->enable_sniff) {
+		pthread_mutex_destroy(&cfg->net->sniff.lock);
+
+		free(cfg->net->sniff.clients);
 	}
 
 	free(cfg->net->data.clients);

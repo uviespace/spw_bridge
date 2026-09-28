@@ -57,6 +57,7 @@ struct bridge_cfg {
 	uint32_t	channel;
 	uint32_t	channel2;
 	uint32_t	link_id;
+	uint32_t	gresb_link;
 	uint32_t	dev_num;
 	bool		reset_dev;
 	double		sig_rate;
@@ -69,6 +70,8 @@ struct bridge_cfg {
 	bool		enable_monitor;
 	bool		enable_rmap;
 	bool		enable_gresb;
+	bool		enable_sniff;
+	bool		sniff_gresb;
 	bool		pus_debug;
 	bool		debug_short;
 	bool		crc_check;

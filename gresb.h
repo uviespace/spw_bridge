@@ -35,6 +35,9 @@
 #define GRESB_VLINK_TX(link)	(GRESB_VLINK_PORT_BASE + (int)(2 * (link)))
 #define GRESB_VLINK_RX(link)	(GRESB_VLINK_PORT_BASE + (int)(2 * (link) + 1))
 
+/* the traffic sniffer port listens on the GRESB, see GRESB-UM v1.5.16 Table 3.1 */
+#define GRESB_SNIFF_PORT	3064
+
 
 /**
  * the maximum packet size exchangeable with the GRESB
