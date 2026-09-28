@@ -132,6 +132,25 @@ void spw_pkt_sink_monitor(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
 
 
 /**
+ * @brief print a decoded RMAP header and payload of a network packet
+ *
+ * @param cfg the bridge configuration; printing is only active when enabled
+ *	      on the command line
+ * @param dir direction string of the packet flow, i.e. NET->SPW or SPW->NET
+ * @param pkt packet bytes at the SpaceWire packet start, past any GRESB
+ *	      envelope or path header
+ * @param len size of the packet in bytes
+ *
+ * @note used for monitor-mode and GRESB-mode traffic; the RMAP header is only
+ *	 decoded when requested on the command line and the payload hex dump
+ *	 is suppressed when the short debug form is active
+ */
+
+void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,
+		     size_t len);
+
+
+/**
  * @brief issue a simplified RMAP read or write command on the SpW link
  *
  * @param cfg  bridge configuration
@@ -268,8 +287,9 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf,
  * @param pkt packet bytes at the CCSDS packet start, past any path header
  * @param len size of the packet in bytes
  *
- * @note monitor-mode traffic is printed by spw_pkt_sink_monitor() instead;
- *	 the payload hex dump is suppressed when the short debug form is active
+ * @note monitor-mode and GRESB-mode traffic is printed by spw_debug_print()
+ *	 instead; the payload hex dump is suppressed when the short debug form
+ *	 is active
  */
 
 void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,

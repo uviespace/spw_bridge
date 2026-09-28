@@ -135,13 +135,16 @@ card and may need adjustment depending on which port is wired to the target:
 
 GRESB protocol with grmon for RMAP access: connect the target SpW link to a
 port of the device that supports RMAP (on the GR712RC only link 0 or 1), start
-the bridge with the GRESB option at 10 Mbit/s and forward the GRESB base ports
-(3000, 3001) to the data port of the bridge:
+the bridge with the GRESB option at 10 Mbit/s and connect grmon:
 
 	./spw_bridge -c 1 -S 10 -G
-	socat tcp-l:3000,fork,reuseaddr tcp:127.0.0.1:1234
-	socat tcp-l:3001,fork,reuseaddr tcp:127.0.0.1:1234
 	grmon -gresb 127.0.0.1
+
+With `-G` the bridge opens the two ports of GRESB virtual link 0 in addition
+to the regular network port, so no socat forwarding is required: port 3000 is
+the transmit port and only sends copies of the GRESB packets that would be
+transmitted via the default port, port 3001 is the receive port and only
+receives packets which could also be received via the default port.
 
 If the GRSPW2 SpW port is not initialised (no boot ROM present), initialise the
 core first through JTAG or another debug interface, e.g. GRSPW0:

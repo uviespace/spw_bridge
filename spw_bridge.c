@@ -84,13 +84,13 @@ static void print_usage(const char *prog, struct bridge_cfg *cfg)
 	printf("  -S LINKSPEED              link speed in Mbit/s (default %g)\n", DEFAULT_LINK_SPEED);
 	printf("  -L LINKID                 id of link to set speed for; needed with Brick Mk2 port 2; (default link_id = channel). \n");
 	printf("  -P                        parse network byte stream for PUS packets\n");
-	printf("  -D                        print decoded PUS-C packet headers and payload (requires -P; PUS-C types only)\n");
+	printf("  -D                        print decoded PUS-C packet headers and payload (requires -P; PUS-C types only); with -G prints the payloads of the GRESB stream\n");
 	printf("  -N                        suppress payload bytes in the debug printout (short form)\n");
 	printf("  -C                        disable the PUS CRC16 check (PUS packets always carry a CRC16 per ECSS-E-ST-70-41C, disable only for tailored streams without one)\n");
 	printf("  -F                        parse network byte stream for FEE data packets\n");
 	printf("  -R RMAP_PORT              exchange RMAP via RMAP_PORT\n");
 	printf("  -M CHANNEL1:CHANNEL2     monitor mode: bridge the given SpW channels, copying packets verbatim between them\n");
-	printf("  -E                        decode RMAP packets in the debug printout (requires -M and -D)\n");
+	printf("  -E                        decode RMAP packets in the debug printout (requires -M or -G and -D)\n");
 	printf("  -G                        use GRESB protocol for network exchange\n");
 	printf("  -X                        execute a device reset\n");
 	printf("  -h, --help                print this help and exit\n");

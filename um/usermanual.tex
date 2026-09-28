@@ -63,7 +63,7 @@
 
 \begin{versionhistory}
   \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
-  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form and sequence checking in the debug printout}
+  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form, sequence checking in the debug printout and native GRESB virtual link 0 transmit and receive ports}
 \end{versionhistory}
 
 
@@ -336,8 +336,13 @@ size and the data.
 
 The GRESB uses a base port number of 3000 with two ports per virtual link:
 the even port is the transmit port and the odd port is the receive port. Up
-to five virtual links are supported. This mode is intended to be used with
-the grmon debug monitor for \gls{RMAP} access (see
+to five virtual links are supported. With the \texttt{-G} option the bridge
+raises the two ports of virtual link 0 (3000 and 3001) directly next to the
+regular network port: the transmit port only sends copies of the GRESB
+packets that would be transmitted via the default port, the receive port only
+receives packets which could also be received via the default port. No
+external forwarding of the ports is required. This mode is intended to be
+used with the grmon debug monitor for \gls{RMAP} access (see
 Section~\ref{sec:gresb}).
 
 \section{ECSS Packet Library}
@@ -874,16 +879,12 @@ bridge with the GRESB option and set the link speed to 10\,Mbit/s:
 
 \noindent
 The GRESB uses a base port number of 3000 with two ports per virtual link
-(the even port for transmit, the odd port for receive). Verify that these
-ports are forwarded to the data port of the bridge, e.g. with socat:
-
-\begin{lstlisting}[language=bash]
-  $ socat tcp-l:3000,fork,reuseaddr tcp:127.0.0.1:1234
-  $ socat tcp-l:3001,fork,reuseaddr tcp:127.0.0.1:1234
-\end{lstlisting}
-
-\noindent
-You may now start grmon against the machine that runs the bridge:
+(the even port for transmit, the odd port for receive). In addition to the
+regular network port, the bridge raises these two ports of virtual link 0
+itself: port 3000 only sends copies of the GRESB packets that would be
+transmitted via the default port, port 3001 only receives packets which
+could also be received via the default port. No external forwarding is
+required. You may now start grmon against the machine that runs the bridge:
 
 \begin{lstlisting}[language=bash]
   $ grmon -gresb 127.0.0.1

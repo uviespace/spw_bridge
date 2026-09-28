@@ -95,8 +95,14 @@ struct net_state {
 	pthread_t		th_poll;
 	pthread_t		th_rmap_accept;
 	pthread_t		th_rmap_poll;
+	pthread_t		th_gresb_tx_accept;
+	pthread_t		th_gresb_tx_poll;
+	pthread_t		th_gresb_rx_accept;
+	pthread_t		th_gresb_rx_poll;
 	struct net_service	data;
 	struct net_service	rmap;
+	struct net_service	gresb_tx;
+	struct net_service	gresb_rx;
 };
 
 
@@ -828,7 +834,10 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 		return;
 	}
 
-	pus_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
+	if (cfg->enable_gresb)
+		spw_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
+	else
+		pus_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
 
 	rmap_parse_pkt(recv_buffer, packet_length);
 
@@ -1037,6 +1046,104 @@ static void rmap_reply_to_clients(struct bridge_cfg *cfg, uint8_t *buf, size_t l
 }
 
 
+static void gresb_tx_to_spw(struct net_service *svc, int sockfd)
+{
+	size_t packet_length;
+
+	ssize_t recv_bytes;
+
+	uint8_t *recv_buffer;
+
+	struct bridge_cfg *cfg;
+
+
+	cfg = svc->state->cfg;
+
+	recv_bytes = recv_gresb_packet(svc, sockfd, &recv_buffer, &packet_length);
+	if (recv_bytes < 0)
+		return;
+
+	if (cfg->enable_monitor) {
+		/* monitor mode: the network side only observes and sends, anything
+		 * received from the net is discarded to keep the links untouched
+		 */
+		free(recv_buffer);
+		return;
+	}
+
+	spw_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
+
+	rmap_parse_pkt(recv_buffer, packet_length);
+
+	spw_send_packet(cfg, recv_buffer, packet_length);
+
+	free(recv_buffer);
+}
+
+
+static void gresb_rx_discard(struct net_service *svc, int sockfd)
+{
+	ssize_t n;
+
+	uint8_t tmp[4096];
+
+
+	while (1) {
+		n = recv(sockfd, tmp, sizeof(tmp), MSG_DONTWAIT);
+		if (n < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				return;
+
+			conn_drop(svc, sockfd, 1);
+			return;
+		}
+
+		if (n == 0) {
+			/* a clean peer close */
+			conn_drop(svc, sockfd, 0);
+			return;
+		}
+	}
+}
+
+
+static void gresb_push_rx_clients(struct bridge_cfg *cfg, const uint8_t *buf,
+				  size_t len)
+{
+	int fd;
+
+	uint8_t *gresb_pkt;
+
+	struct net_service *svc;
+
+
+	svc = &cfg->net->gresb_rx;
+
+	/* the receive ports are only opened in server mode */
+	if (cfg->mode != MODE_SERVER || !svc->sock_fd)
+		return;
+
+	gresb_pkt = gresb_create_host_data_pkt(buf, len);
+	if (!gresb_pkt) {
+		printf("Error creating GRESB packet, dropping the SpW packet\n");
+		return;
+	}
+
+	pthread_mutex_lock(&svc->lock);
+	for (fd = 0; fd < svc->nfds; fd++) {
+		if (!FD_ISSET(fd, &svc->conn_set))
+			continue;
+
+		if (send_all(fd, gresb_pkt,
+			     gresb_get_host_data_pkt_size(gresb_pkt)) == -1)
+			conn_drop_locked(svc, fd, 1);
+	}
+	pthread_mutex_unlock(&svc->lock);
+
+	gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
+}
+
+
 /**
  * @brief handle a complete packet received on the SpW link
  *
@@ -1053,8 +1160,14 @@ void net_pkt_sink(struct bridge_cfg *cfg, __attribute__((unused)) uint32_t chan,
 		return;
 	}
 
-	pus_debug_print(cfg, "SPW->NET",
-			buf + cfg->skip_header_bytes, len - cfg->skip_header_bytes);
+	if (cfg->enable_gresb)
+		spw_debug_print(cfg, "SPW->NET",
+				buf + cfg->skip_header_bytes,
+				len - cfg->skip_header_bytes);
+	else
+		pus_debug_print(cfg, "SPW->NET",
+				buf + cfg->skip_header_bytes,
+				len - cfg->skip_header_bytes);
 
 	if (cfg->interpret_pus)
 		if (cfg->crc_check &&
@@ -1115,6 +1228,8 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t l
 				       gresb_get_host_data_pkt_size(gresb_pkt));
 
 			gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
+
+			gresb_push_rx_clients(cfg, buf, len);
 		} else {
 			dgram_send_all(svc, buf, len);
 		}
@@ -1146,8 +1261,11 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t l
 	}
 	pthread_mutex_unlock(&svc->lock);
 
-	if (cfg->enable_gresb)
+	if (cfg->enable_gresb) {
 		gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
+
+		gresb_push_rx_clients(cfg, buf, len);
+	}
 }
 
 
@@ -1234,6 +1352,51 @@ void net_start(struct bridge_cfg *cfg)
 		printf("Started in CLIENT mode\n");
 	}
 
+	if (cfg->enable_gresb && cfg->mode == MODE_SERVER) {
+
+		st->gresb_tx.state = st;
+		st->gresb_tx.handle_pkt = gresb_tx_to_spw;
+		st->gresb_rx.state = st;
+		st->gresb_rx.handle_pkt = gresb_rx_discard;
+
+		pthread_mutex_init(&st->gresb_tx.lock, NULL);
+		pthread_mutex_init(&st->gresb_rx.lock, NULL);
+
+		snprintf(url, sizeof(url), "%s:%u", cfg->host,
+			 GRESB_VLINK_TX(0));
+		st->gresb_tx.sock_fd = bind_server_socket(url, &st->gresb_tx.conn_set);
+
+		snprintf(url, sizeof(url), "%s:%u", cfg->host,
+			 GRESB_VLINK_RX(0));
+		st->gresb_rx.sock_fd = bind_server_socket(url, &st->gresb_rx.conn_set);
+
+		if ((ret = pthread_create(&st->th_gresb_tx_accept, NULL,
+					  accept_connections, &st->gresb_tx))) {
+			printf("Epic fail in pthread_create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
+
+		if ((ret = pthread_create(&st->th_gresb_tx_poll, NULL,
+					  poll_socket, &st->gresb_tx))) {
+			printf("Epic fail in pthread_create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
+
+		if ((ret = pthread_create(&st->th_gresb_rx_accept, NULL,
+					  accept_connections, &st->gresb_rx))) {
+			printf("Epic fail in pthread_create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
+
+		if ((ret = pthread_create(&st->th_gresb_rx_poll, NULL,
+					  poll_socket, &st->gresb_rx))) {
+			printf("Epic fail in pthread_create: %s\n", strerror(ret));
+			exit(EXIT_FAILURE);
+		}
+
+		printf("Started GRESB virtual link 0 server\n");
+	}
+
 	if (cfg->enable_rmap) {
 
 		snprintf(url, sizeof(url), "%s:%u", cfg->host, cfg->rmap_port);
@@ -1277,11 +1440,26 @@ void net_stop(struct bridge_cfg *cfg)
 		pthread_cancel(st->th_rmap_poll);
 	}
 
+	if (cfg->enable_gresb && cfg->mode == MODE_SERVER) {
+		pthread_cancel(st->th_gresb_tx_accept);
+		pthread_cancel(st->th_gresb_tx_poll);
+		pthread_cancel(st->th_gresb_rx_accept);
+		pthread_cancel(st->th_gresb_rx_poll);
+	}
+
 	if (st->data.sock_fd)
 		close(st->data.sock_fd);
 
 	if (st->rmap.sock_fd)
 		close(st->rmap.sock_fd);
+
+	if (cfg->enable_gresb && cfg->mode == MODE_SERVER) {
+		if (st->gresb_tx.sock_fd)
+			close(st->gresb_tx.sock_fd);
+
+		if (st->gresb_rx.sock_fd)
+			close(st->gresb_rx.sock_fd);
+	}
 
 	if (st->client_sock)
 		close(st->client_sock);
@@ -1297,6 +1475,13 @@ void net_stop(struct bridge_cfg *cfg)
 	if (cfg->enable_rmap) {
 		pthread_join(st->th_rmap_accept, NULL);
 		pthread_join(st->th_rmap_poll, NULL);
+	}
+
+	if (cfg->enable_gresb && cfg->mode == MODE_SERVER) {
+		pthread_join(st->th_gresb_tx_accept, NULL);
+		pthread_join(st->th_gresb_tx_poll, NULL);
+		pthread_join(st->th_gresb_rx_accept, NULL);
+		pthread_join(st->th_gresb_rx_poll, NULL);
 	}
 }
 
@@ -1314,6 +1499,14 @@ void net_release(struct bridge_cfg *cfg)
 {
 	pthread_mutex_destroy(&cfg->net->data.lock);
 	pthread_mutex_destroy(&cfg->net->rmap.lock);
+
+	if (cfg->enable_gresb && cfg->mode == MODE_SERVER) {
+		pthread_mutex_destroy(&cfg->net->gresb_tx.lock);
+		pthread_mutex_destroy(&cfg->net->gresb_rx.lock);
+
+		free(cfg->net->gresb_tx.clients);
+		free(cfg->net->gresb_rx.clients);
+	}
 
 	free(cfg->net->data.clients);
 	free(cfg->net->rmap.clients);
