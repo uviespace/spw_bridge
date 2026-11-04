@@ -46,7 +46,9 @@ the program and shut down the device cleanly.
 	-R [PORT]        enable the pseudo-RMAP service on PORT (default 2345)
 	-M C1:C2         monitor mode: bridge the given SpW channels, copying
 	                 packets verbatim between them
-	-E               decode RMAP packets in the debug printout (requires -M or -G and -D)
+	-E [LEVEL]       decode RMAP packets in the debug printout (requires -M or -G and -D;
+	                 level 1 prints the header, level 2 adds the instruction, reply
+	                 path and data words, use e.g. -E2)
 	-G [LINKID]      use the GRESB protocol, opening the virtual link TX/RX ports (default link 0)
 	-W [FORMAT]      sniff all bridge traffic on the traffic sniffer port 3064 (bare -W: raw stream, -Wg: wrap each packet in a GRESB container)
 	-X               perform a device reset before opening the channel
@@ -101,11 +103,17 @@ and data CRCs):
 
 	./spw_bridge -M 1:2 -D -E
 
+"-E2" adds a second decode line with the instruction field, the reply path and
+the data words (the reply path is "none" when the command carries no return
+path):
+
+	./spw_bridge -M 1:2 -D -E2
+
 "-N" switches the printout to the short form: only the direction line (and,
-with "-E", the decoded RMAP header line) is printed, payload bytes are
-suppressed, and a packet that is not RMAP carries no RMAP header line. The
-short form can also be toggled with "s"/"S" from the terminal while the
-bridge is running.
+with "-E", the decoded RMAP header line and, at level 2, the detail line) is
+printed, payload bytes are suppressed, and a packet that is not RMAP carries
+no RMAP header line. The short form can also be toggled with "s"/"S" from the
+terminal while the bridge is running.
 
 ## Sniffer
 

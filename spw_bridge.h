@@ -66,7 +66,7 @@ struct bridge_cfg {
 	useconds_t	pkt_throttle_usec;
 	bool		interpret_pus;
 	bool		interpret_fee;
-	bool		interpret_rmap;
+	uint8_t		rmap_debug;
 	bool		enable_monitor;
 	bool		enable_rmap;
 	bool		enable_gresb;

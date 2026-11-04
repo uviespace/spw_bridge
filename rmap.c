@@ -832,6 +832,7 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, size_t len)
 	size_t n = 0;
 	size_t i;
 	int min_hdr_size;
+	int has_data;
 
 	struct rmap_pkt *pkt = NULL;
 
@@ -913,10 +914,22 @@ struct rmap_pkt *rmap_pkt_from_buffer(uint8_t *buf, size_t len)
 				 (uint32_t)buf[RMAP_DATALEN_BYTE2 + n];
 	}
 
-	if (len > (size_t)RMAP_HEADER_CRC)
-		pkt->hdr_crc  = buf[RMAP_HEADER_CRC];
+	/* write commands and replies to reads carry data, read commands and
+	 * write replies do not; a read-modify-write carries data either way */
+	has_data = (pkt->ri.cmd_resp == !!(pkt->ri.cmd & RMAP_CMD_BIT_WRITE));
+	if (pkt->ri.cmd == RMAP_READ_MODIFY_WRITE_ADDR_INC)
+		has_data = 1;
 
-	if (pkt->data_len) {
+	/* write replies have no data length field, their header CRC follows
+	 * the transaction identifier directly */
+	if (pkt->ri.cmd_resp || !(pkt->ri.cmd & RMAP_CMD_BIT_WRITE)) {
+		if (len > (size_t)(RMAP_HEADER_CRC + n))
+			pkt->hdr_crc = buf[RMAP_HEADER_CRC + n];
+	} else if (len > (size_t)RMAP_HDR_MIN_SIZE_WRITE_REP) {
+		pkt->hdr_crc = buf[RMAP_HDR_MIN_SIZE_WRITE_REP];
+	}
+
+	if (has_data && pkt->data_len) {
 		if (len < RMAP_DATA_START + n + pkt->data_len) {
 
 #if (__sparc__)

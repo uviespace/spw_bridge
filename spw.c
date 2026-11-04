@@ -354,6 +354,53 @@ bool spw_link_ready(struct bridge_cfg *cfg)
  *	 is suppressed when the short debug form is active
  */
 
+static void print_rmap_detail(const struct rmap_pkt *pkt)
+{
+	uint32_t word;
+
+	size_t i;
+
+
+	printf("  RMAP: instruction=0x%02x cmd=0x%x%s%s%s",
+	       (uint32_t)pkt->instruction,
+	       (uint32_t)pkt->ri.cmd,
+	       (pkt->ri.cmd & RMAP_CMD_BIT_WRITE) ? " write" : " read",
+	       (pkt->ri.cmd & RMAP_CMD_BIT_VERIFY) ? " verify" : "",
+	       (pkt->ri.cmd & RMAP_CMD_BIT_INC) ? " inc" : " single");
+
+	if (pkt->rpath_len) {
+		printf(" rpath=");
+		for (i = 0; i < pkt->rpath_len; i++)
+			printf("%02x", pkt->rpath[i]);
+	} else {
+		printf(" rpath=none");
+	}
+
+	printf("\n");
+
+	if (!pkt->data || !pkt->data_len)
+		return;
+
+	printf("  RMAP: data (%u bytes):", pkt->data_len);
+
+	word = 0;
+	for (i = 0; i < pkt->data_len; i++) {
+		word = (word << 8) | pkt->data[i];
+		if ((i & 3) == 3) {
+			printf(" %08x", word);
+			word = 0;
+		}
+	}
+
+	if (i & 3) {
+		word <<= 8 * (4 - (i & 3));
+		printf(" %08x", word);
+	}
+
+	printf("\n");
+}
+
+
 void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,
 		     size_t len)
 {
@@ -377,7 +424,7 @@ void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 	strftime(tsbuf, sizeof(tsbuf), "%F %T", &tmv);
 	printf("[%s.%03u] %s\n", tsbuf, ms, dir);
 
-	if (cfg->interpret_rmap) {
+	if (cfg->rmap_debug) {
 		rmap_pkt = rmap_pkt_from_buffer((uint8_t *)pkt, len);
 		if (rmap_pkt) {
 			printf("  RMAP: %s %s dst=0x%02x key=0x%02x "
@@ -393,6 +440,9 @@ void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 			       (uint32_t)rmap_pkt->data_len,
 			       (uint32_t)rmap_pkt->hdr_crc,
 			       (uint32_t)rmap_pkt->data_crc);
+
+			if (cfg->rmap_debug > 1)
+				print_rmap_detail(rmap_pkt);
 
 			rmap_erase_packet(rmap_pkt);
 		}

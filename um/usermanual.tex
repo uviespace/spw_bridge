@@ -63,7 +63,7 @@
 
 \begin{versionhistory}
   \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
-  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form, sequence checking in the debug printout, native GRESB virtual link transmit and receive ports with selectable virtual link, GRESB and RMAP payload debug output and a GRESB traffic sniffer port}
+  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form, sequence checking in the debug printout, native GRESB virtual link transmit and receive ports with selectable virtual link, GRESB and RMAP payload debug output, read command decoding, a selectable RMAP decode detail level and a GRESB traffic sniffer port}
 \end{versionhistory}
 
 
@@ -485,7 +485,7 @@ The full option set is:
 	\texttt{-F}		& parse the network byte stream for FEE data packets \\
 	\texttt{-R [PORT]}	& enable the pseudo--\gls{RMAP} service on PORT (default 2345) \\
 	\texttt{-M C1:C2}	& monitor mode: bridge the given \gls{SpW} channels, copying packets verbatim between them \\
-	\texttt{-E}		& decode \gls{RMAP} packets in the debug printout (requires \texttt{-M} or \texttt{-G} and \texttt{-D}) \\
+	\texttt{-E [LEVEL]}	& decode \gls{RMAP} packets in the debug printout (requires \texttt{-M} or \texttt{-G} and \texttt{-D}); level~1 prints the header, level~2 also the instruction, reply path and data words \\
 	\texttt{-G [LINKID]}	& use the GRESB protocol, opening the transmit and receive ports of GRESB virtual link LINKID (default 0) \\
 	\texttt{-W [FORMAT]}	& sniff all bridge traffic on the GRESB traffic sniffer port 3064; bare \texttt{-W} forwards the raw stream, \texttt{-Wg} wraps each packet in a GRESB container \\
 	\texttt{-X}		& perform a device reset before opening the channel \\
@@ -591,12 +591,13 @@ With \texttt{-D}, the debug printout shows the direction of the copied packet
 as \texttt{SPW[A]->SPW[B]} instead of the network directions, followed by a
 hex dump of the raw packet payload. With the additional \texttt{-E} option the
 packets are decoded as \gls{RMAP} and a header line is printed in front of the
-payload dump (see Section~\ref{sec:mondbg}). A packet that cannot be parsed as
-\gls{RMAP} only shows the raw payload dump. \texttt{-N} suppresses the payload
-dump (the short form); the direction line and, with \texttt{-E}, the decoded
-\gls{RMAP} header line are still printed. No \gls{PUS} interpretation is
-performed on the monitor path, and packets are never modified by the
-decoding.
+payload dump (see Section~\ref{sec:mondbg}); \texttt{-E2} adds a detail line
+with the instruction, the reply path and the data words. A packet that cannot
+be parsed as \gls{RMAP} only shows the raw payload dump. \texttt{-N} suppresses
+the payload dump (the short form); the direction line and, with \texttt{-E},
+the decoded \gls{RMAP} header line (and, at level~2, the detail line) are still
+printed. No \gls{PUS} interpretation is performed on the monitor path, and
+packets are never modified by the decoding.
 
 \section{Reading the Monitor Mode Printout}
 \label{sec:mondbg}
@@ -634,6 +635,22 @@ like
 \end{lstlisting}
 
 \noindent
+Read commands carry no data field, so their requested length appears as
+\texttt{data\_len} and no data CRC is printed. With \texttt{-E2}, a detail line
+follows the header line, showing the instruction field, the reply path and the
+data words of a packet that carries data:
+
+\begin{lstlisting}
+[2026-09-10 10:20:29.880] SPW[1]->SPW[2]
+  RMAP: CMD READ dst=0xfe key=0xab src=0x30 tr_id=2 addr=0x00001000 data_len=4 hdr_crc=0x5e data_crc=0x00
+  RMAP: instruction=0x48 cmd=0x2 read single rpath=none
+[2026-09-10 10:20:31.204] SPW[2]->SPW[1]
+  RMAP: REPLY READ dst=0x30 key=0x00 src=0xfe tr_id=2 addr=0x00000000 data_len=4 hdr_crc=0x77 data_crc=0x2c
+  RMAP: instruction=0x08 cmd=0x2 read single rpath=none
+  RMAP: data (4 bytes): deadbeef
+\end{lstlisting}
+
+\noindent
 The printed fields are
 
 \begin{tabu} to \linewidth {@{}ll@{}}
@@ -646,6 +663,10 @@ The printed fields are
 	\texttt{addr}		& (first) data address \\
 	\texttt{data\_len}	& length of the \gls{RMAP} data field in octets \\
 	\texttt{hdr\_crc}, \texttt{data\_crc} & the header and data CRC-8 values carried by the packet \\
+	\texttt{instruction}	& raw instruction octet (level~2) \\
+	\texttt{cmd}		& four-bit command code, followed by the read/write operation and the increment and verify flags (level~2) \\
+	\texttt{rpath}		& reply path bytes, or \texttt{none} (level~2) \\
+	\texttt{data}		& data field as 32-bit words; omitted when the packet carries no data (level~2) \\
 \end{tabu}
 
 \noindent

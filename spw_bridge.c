@@ -91,7 +91,7 @@ static void print_usage(const char *prog, struct bridge_cfg *cfg)
 	printf("  -F                        parse network byte stream for FEE data packets\n");
 	printf("  -R RMAP_PORT              exchange RMAP via RMAP_PORT\n");
 	printf("  -M CHANNEL1:CHANNEL2     monitor mode: bridge the given SpW channels, copying packets verbatim between them\n");
-	printf("  -E                        decode RMAP packets in the debug printout (requires -M or -G and -D)\n");
+	printf("  -E [LEVEL]                decode RMAP packets in the debug printout (requires -M or -G and -D; level 1 prints the header, level 2 adds the instruction, reply path and data words, use e.g. -E2)\n");
 	printf("  -G [LINKID]               use GRESB protocol, opening the virtual link TX/RX ports (default link 0), use e.g. -G3\n");
 	printf("  -W [FORMAT]               sniff all bridge traffic on the traffic sniffer port %u (bare -W: raw stream, -Wg: wrap each packet in a GRESB container)\n", (uint32_t)GRESB_SNIFF_PORT);
 	printf("  -X                        execute a device reset\n");
@@ -187,7 +187,7 @@ static void bridge_cfg_init(struct bridge_cfg *cfg)
 	cfg->pkt_throttle_usec = 0;
 	cfg->interpret_pus = false;
 	cfg->interpret_fee = false;
-	cfg->interpret_rmap = false;
+	cfg->rmap_debug = 0;
 	cfg->enable_monitor = false;
 	cfg->channel2 = 0;
 	cfg->enable_rmap = false;
@@ -432,7 +432,20 @@ static void opt_monitor(struct bridge_cfg *cfg)
 
 static void opt_rmap_debug(struct bridge_cfg *cfg)
 {
-	cfg->interpret_rmap = true;
+	long level;
+
+	char *endp;
+
+	level = 1;
+	if (optarg) {
+		level = strtol(optarg, &endp, 0);
+		if ((*endp) != '\0' || level < 1 || level > 2) {
+			printf("error: -E takes level 1 or 2, use -E2\n");
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	cfg->rmap_debug = (uint8_t)level;
 }
 
 
@@ -462,7 +475,7 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 	int opt;
 
 
-	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:uCDPFG::XRM:ENhW::")) != -1) {
+	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:uCDPFG::XRM:E::NhW::")) != -1) {
 		switch (opt) {
 		case 'i':
 			opt_dev_num(cfg);
