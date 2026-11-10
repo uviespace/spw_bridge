@@ -881,9 +881,9 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 	}
 
 	if (cfg->enable_gresb)
-		spw_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
+		spw_debug_print(cfg, "NET->SPW", recv_buffer, packet_length, NULL, 0);
 	else
-		pus_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
+		pus_debug_print(cfg, "NET->SPW", recv_buffer, packet_length, NULL, 0);
 
 	rmap_parse_pkt(recv_buffer, packet_length);
 
@@ -1119,7 +1119,7 @@ static void gresb_tx_to_spw(struct net_service *svc, int sockfd)
 		return;
 	}
 
-	spw_debug_print(cfg, "NET->SPW", recv_buffer, packet_length);
+	spw_debug_print(cfg, "NET->SPW", recv_buffer, packet_length, NULL, 0);
 
 	rmap_parse_pkt(recv_buffer, packet_length);
 
@@ -1211,11 +1211,13 @@ void net_pkt_sink(struct bridge_cfg *cfg, __attribute__((unused)) uint32_t chan,
 	if (cfg->enable_gresb)
 		spw_debug_print(cfg, "SPW->NET",
 				buf + cfg->skip_header_bytes,
-				len - cfg->skip_header_bytes);
+				len - cfg->skip_header_bytes,
+				buf, cfg->skip_header_bytes);
 	else
 		pus_debug_print(cfg, "SPW->NET",
 				buf + cfg->skip_header_bytes,
-				len - cfg->skip_header_bytes);
+				len - cfg->skip_header_bytes,
+				buf, cfg->skip_header_bytes);
 
 	if (cfg->interpret_pus)
 		if (cfg->crc_check &&

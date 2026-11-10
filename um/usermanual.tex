@@ -63,7 +63,7 @@
 
 \begin{versionhistory}
   \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
-  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form, sequence checking in the debug printout, native GRESB virtual link transmit and receive ports with selectable virtual link, GRESB and RMAP payload debug output, read command decoding, a selectable RMAP decode detail level and a GRESB traffic sniffer port}
+  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form, sequence checking in the debug printout, native GRESB virtual link transmit and receive ports with selectable virtual link, GRESB and RMAP payload debug output, read command decoding, a selectable RMAP decode detail level, a GRESB traffic sniffer port and the printout of the header bytes dropped from received SpaceWire packets}
 \end{versionhistory}
 
 
@@ -474,7 +474,7 @@ The full option set is:
 	\texttt{-s ADDRESS}	& local source address (default 0.0.0.0) \\
 	\texttt{-r HOST:PORT}& client mode: address and port of the remote target \\
 	\texttt{-u}		& use UDP instead of TCP \\
-	\texttt{-d NUM}		& number of header bytes to drop from incoming \gls{SpW} packets (default 0) \\
+	\texttt{-d NUM}		& number of header bytes to drop from incoming \gls{SpW} packets (default 0); with \texttt{-D} the dropped bytes are shown in the debug printout \\
 	\texttt{-t USEC}	& throttle: delay in microseconds inserted before each \gls{SpW} packet (default 0) \\
 	\texttt{-S MBPS}	& link speed in Mbit/s (default 10, valid range 2--400) \\
 	\texttt{-L LINKID}	& id of the link whose speed is set (default: equal to the channel) \\
@@ -772,6 +772,13 @@ The printed fields are
 The payload is dumped as hex octets, sixteen per line, with an empty line
 closing the dump. A payload that ends with a partial line is terminated
 properly, so every packet dump is followed by a blank line.
+\\
+When \texttt{-d} drops leading header bytes from a received \gls{SpW} packet,
+the dropped bytes are shown in the \texttt{SPW->NET} direction as an
+\texttt{SpW header (N bytes):} line directly below the direction line, in front of
+the decoded fields, so the stripped part of the packet remains visible in the
+log. The line is also printed in the short form and in the GRESB debug
+printout; monitor mode does not drop header bytes.
 \\
 In monitor mode (Section~\ref{sec:monitor}) the dump shows the raw copied
 packet; with \texttt{-E} an \gls{RMAP} header line (command or reply, read or

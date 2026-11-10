@@ -143,6 +143,9 @@ void spw_pkt_sink_monitor(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
  * @param pkt packet bytes at the SpaceWire packet start, past any GRESB
  *	      envelope or path header
  * @param len size of the packet in bytes
+ * @param hdr leading header bytes dropped from the packet, or NULL when
+ *	      there are none
+ * @param hdr_len size of the dropped header in bytes
  *
  * @note used for monitor-mode and GRESB-mode traffic; the RMAP header is only
  *	 decoded when requested on the command line and the payload hex dump
@@ -150,7 +153,7 @@ void spw_pkt_sink_monitor(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
  */
 
 void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,
-		     size_t len);
+		     size_t len, const uint8_t *hdr, size_t hdr_len);
 
 
 /**
@@ -289,6 +292,9 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf,
  * @param dir direction string of the packet flow, i.e. NET->SPW or SPW->NET
  * @param pkt packet bytes at the CCSDS packet start, past any path header
  * @param len size of the packet in bytes
+ * @param hdr leading header bytes dropped from the packet, or NULL when
+ *	      there are none
+ * @param hdr_len size of the dropped header in bytes
  *
  * @note monitor-mode and GRESB-mode traffic is printed by spw_debug_print()
  *	 instead; the payload hex dump is suppressed when the short debug form
@@ -296,7 +302,7 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf,
  */
 
 void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,
-		     size_t len);
+		     size_t len, const uint8_t *hdr, size_t hdr_len);
 
 
 /**

@@ -34,7 +34,7 @@ the program and shut down the device cleanly.
 	-s ADDRESS       local source address (default 0.0.0.0)
 	-r HOST:PORT     client mode: address and port of the remote target
 	-u               use UDP instead of TCP
-	-d NUM           header bytes to drop from incoming SpW packets (default 0)
+	-d NUM           header bytes to drop from incoming SpW packets (default 0); with -D the dropped bytes are shown in the debug printout
 	-t USEC          throttle delay before each SpW packet (default 0)
 	-S MBPS          link speed in Mbit/s (default 10, valid range 2-400)
 	-L LINKID        id of the link whose speed is set (default: the channel)
@@ -80,7 +80,10 @@ prints a decoded CCSDS/PUS-C header and payload dump for every packet in both
 directions; the printout can be toggled on and off from the terminal with
 "d"/"D" while the bridge is running (requires stdin to be a terminal). "-N"
 restricts the printout to the decoded header lines (no payload bytes); the
-short form is toggled with "s"/"S".
+short form is toggled with "s"/"S". With "-d" the header bytes dropped from
+received SpW packets are shown in the "SPW->NET" printout as an "SpW header
+(N bytes)" line in front of the decoded lines; the line is also printed in the
+short form and in the GRESB printout.
 
 ## Monitor Mode
 

@@ -339,21 +339,6 @@ bool spw_link_ready(struct bridge_cfg *cfg)
 }
 
 
-/**
- * @brief print a decoded RMAP header and payload of a network packet
- *
- * @param cfg the bridge configuration; printing is only active when enabled
- *	      on the command line
- * @param dir direction string of the packet flow, i.e. NET->SPW or SPW->NET
- * @param pkt packet bytes at the SpaceWire packet start, past any GRESB
- *	      envelope or path header
- * @param len size of the packet in bytes
- *
- * @note used for monitor-mode and GRESB-mode traffic; the RMAP header is only
- *	 decoded when requested on the command line and the payload hex dump
- *	 is suppressed when the short debug form is active
- */
-
 static void print_rmap_detail(const struct rmap_pkt *pkt)
 {
 	uint32_t word;
@@ -401,8 +386,26 @@ static void print_rmap_detail(const struct rmap_pkt *pkt)
 }
 
 
+/**
+ * @brief print a decoded RMAP header and payload of a network packet
+ *
+ * @param cfg the bridge configuration; printing is only active when enabled
+ *	      on the command line
+ * @param dir direction string of the packet flow, i.e. NET->SPW or SPW->NET
+ * @param pkt packet bytes at the SpaceWire packet start, past any GRESB
+ *	      envelope or path header
+ * @param len size of the packet in bytes
+ * @param hdr leading header bytes dropped from the packet, or NULL when
+ *	      there are none
+ * @param hdr_len size of the dropped header in bytes
+ *
+ * @note used for monitor-mode and GRESB-mode traffic; the RMAP header is only
+ *	 decoded when requested on the command line and the payload hex dump
+ *	 is suppressed when the short debug form is active
+ */
+
 void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,
-		     size_t len)
+		     size_t len, const uint8_t *hdr, size_t hdr_len)
 {
 	uint32_t ms;
 	size_t i;
@@ -423,6 +426,13 @@ void spw_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 	localtime_r(&now.tv_sec, &tmv);
 	strftime(tsbuf, sizeof(tsbuf), "%F %T", &tmv);
 	printf("[%s.%03u] %s\n", tsbuf, ms, dir);
+
+	if (hdr_len) {
+		printf("  SpW header (%zu bytes):", hdr_len);
+		for (i = 0; i < hdr_len; i++)
+			printf(" %02x", (uint32_t)hdr[i]);
+		printf("\n");
+	}
 
 	if (cfg->rmap_debug) {
 		rmap_pkt = rmap_pkt_from_buffer((uint8_t *)pkt, len);
@@ -492,7 +502,7 @@ void spw_pkt_sink_monitor(struct bridge_cfg *cfg, uint32_t chan, uint8_t *buf,
 		 chan == 0 ? cfg->channel : cfg->channel2,
 		 chan == 0 ? cfg->channel2 : cfg->channel);
 
-	spw_debug_print(cfg, dir, buf, len);
+	spw_debug_print(cfg, dir, buf, len, NULL, 0);
 
 	if (spw_link_ready(cfg))
 		spw_send_packet_chan(cfg, other, buf, len);

@@ -555,7 +555,7 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 
 
 void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt,
-		     size_t len)
+		     size_t len, const uint8_t *hdr, size_t hdr_len)
 {
 	uint8_t tmtc;
 	uint8_t tref;
@@ -586,6 +586,13 @@ void pus_debug_print(struct bridge_cfg *cfg, const char *dir, const uint8_t *pkt
 	localtime_r(&now.tv_sec, &tmv);
 	strftime(tsbuf, sizeof(tsbuf), "%F %T", &tmv);
 	printf("[%s.%03u] %s\n", tsbuf, ms, dir);
+
+	if (hdr_len) {
+		printf("  SpW header (%zu bytes):", hdr_len);
+		for (i = 0; i < hdr_len; i++)
+			printf(" %02x", (uint32_t)hdr[i]);
+		printf("\n");
+	}
 
 	if (len < 6) {
 		printf("  short packet (%zu bytes), not a CCSDS packet\n", len);
