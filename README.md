@@ -2,10 +2,11 @@
 
 A software bridge between a SpaceWire link and a TCP/IP or UDP connection to a
 workstation. It operates a SpaceWire interface device through the STAR API and
-relays packets between the SpW link and the network endpoint in either
-direction. It is intended for ground support equipment, e.g. to operate the
-front-end electronics of an instrument through a SpaceWire-to-Ethernet path, or
-to debug a LEON3-FT-based target such as a GR712RC through RMAP.
+relays packets between the SpW link and the network endpoints in either
+direction, routing the traffic of every network connection to all others. It is
+intended for ground support equipment, e.g. to operate the front-end electronics
+of an instrument through a SpaceWire-to-Ethernet path, or to debug a
+LEON3-FT-based target such as a GR712RC through RMAP.
 
 ## Building
 
@@ -32,8 +33,11 @@ the program and shut down the device cleanly.
 	-n PATH          routing path, colon-separated hex bytes, one per node (up to 256)
 	-p PORT          local data port (default 1234)
 	-s ADDRESS       local source address (default 0.0.0.0)
-	-r HOST:PORT     client mode: address and port of the remote target
-	-u               use UDP instead of TCP
+	-l HOST:PORT     open a listen endpoint in server mode, repeatable; when given,
+	                 the default endpoint (-p/-s) is not opened
+	-r HOST:PORT     client mode: address and port of the remote target, repeatable;
+	                 each -r opens one outgoing connection
+	-u               use UDP instead of TCP (not combinable with -l or -r)
 	-d NUM           header bytes to drop from incoming SpW packets (default 0); with -D the dropped bytes are shown in the debug printout
 	-t USEC          throttle delay before each SpW packet (default 0)
 	-S MBPS          link speed in Mbit/s (default 10, valid range 2-400)
@@ -60,15 +64,25 @@ one per node (e.g. "01:24:00:00:00"); out-of-range values are truncated to
 
 ## Operating Modes
 
-* server mode (default): the bridge listens for multiple TCP connections;
-  every connected peer receives the SpW traffic and data from any peer is
-  transmitted on the SpW link.
+* server mode (default): the bridge listens for multiple TCP connections on
+  one data endpoint ("-p"/"-s"); every connected peer receives the SpW traffic
+  and data from any peer is transmitted on the SpW link and routed to all
+  other peers. Additional listen endpoints are opened with "-l", which
+  replaces the default endpoint.
 
-* client mode ("-r"): the bridge connects to "HOST:PORT" and operates a single
-  connection; if the link is lost, the bridge terminates.
+* client mode ("-r"): the bridge connects to the "HOST:PORT" targets given,
+  one outgoing connection per "-r"; data from any connection is transmitted
+  on the SpW link and routed to all others. When the last outgoing connection
+  is lost, the bridge terminates.
+
+* mixed ("-l" with "-r"): the bridge listens on the "-l" endpoints and also
+  connects to the "-r" targets; all connections, incoming and outgoing, share
+  the same fan-out. Losing an outgoing connection does not terminate the
+  bridge while listen endpoints remain.
 
 * UDP mode ("-u"): one datagram per SpW packet; peers are registered as they
   are seen, i.e. the first datagram from a host registers it as a recipient.
+  The "-l" and "-r" endpoints are TCP only and can not be combined with "-u".
 
 ## PUS Mode
 
@@ -137,6 +151,16 @@ container with "-Wg":
 Server mode with a PCIe card, transmit/receive on channel 2:
 
 	./spw_bridge -c 2
+
+Serve two data endpoints instead of the default one; data from any connection
+goes to the SpW link and to all other connections:
+
+	./spw_bridge -c 2 -l 0.0.0.0:5573 -l 0.0.0.0:5574
+
+Listen and dial out at the same time, e.g. to attach a local observer while
+forwarding to a remote bridge:
+
+	./spw_bridge -c 2 -l 127.0.0.1:5573 -r remotehost:5573
 
 Brick MK II (the channel is always 1), configure the signalling rate of link 2
 and send packets via route 2 to the remote SpW device with node address 0x14:

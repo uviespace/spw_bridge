@@ -63,7 +63,7 @@
 
 \begin{versionhistory}
   \vhEntry{1.0}{10.09.2026}{AL}{Initial version}
-  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form, sequence checking in the debug printout, native GRESB virtual link transmit and receive ports with selectable virtual link, GRESB and RMAP payload debug output, read command decoding, a selectable RMAP decode detail level, a GRESB traffic sniffer port and the printout of the header bytes dropped from received SpaceWire packets}
+  \vhEntry{1.1}{10.09.2026}{AL}{add monitor mode bridging two SpaceWire channels with RMAP decoding, payload suppression, a short debug form, sequence checking in the debug printout, native GRESB virtual link transmit and receive ports with selectable virtual link, GRESB and RMAP payload debug output, read command decoding, a selectable RMAP decode detail level, a GRESB traffic sniffer port, repeatable data listen endpoints and multiple outgoing client connections with routing between all data connections, and the printout of the header bytes dropped from received SpaceWire packets}
 \end{versionhistory}
 
 
@@ -98,13 +98,15 @@ network side.
 \texttt{spw\_bridge} is a software bridge between a \gls{SpaceWire} link and a
 network connection to a workstation. It operates a \gls{SpaceWire} interface
 device through the \gls{STAR} API and relays packets between the \gls{SpW}
-link and a \gls{TCP}/IP or \gls{UDP} endpoint, in either direction.
+link and one or more \gls{TCP}/IP endpoints or a \gls{UDP} endpoint, in either
+direction.
 \\
 
 On the \gls{SpW} side, the software uses the STAR API to select a device and
 channel, to set the link signalling rate and to submit and receive packets via
-the STAR transfer-operation machinery. On the network side, it provides a mult
-iple-connection server, a single-connection client, or a UDP endpoint. The
+the STAR transfer-operation machinery. On the network side, it provides a
+multiple-connection server with any number of listen endpoints, a client with
+one or more outgoing connections, or a UDP endpoint. The
 bridge may optionally interpret the carried data stream: \gls{PUS} packets,
 \gls{FEE} data frames, GRESB protocol packets, and a pseudo-\gls{RMAP} command
 interface are supported and are described below.
@@ -193,8 +195,9 @@ The following gives a concise overview of the currently implemented features:
 
 \begin{itemize}
 
-\item Network transport over a single TCP connection (server or client mode)
-or over UDP datagrams.\\
+\item Network transport over any number of \gls{TCP} connections, listening or
+dialling out, with routing between all data connections, or over \gls{UDP}
+datagrams.\\
 
 \item Interpretation of the network byte stream into \gls{PUS} packets
 (ECSS-E-ST-70-41C) with sequence counting and CRC16 verification in both
@@ -259,9 +262,10 @@ invokes for every complete packet received on the link.
 \label{sec:net}
 
 The network subsystem maintains a per-service fds set and multiplexes its
-connections with \texttt{select()}. Two services exist: the \emph{data}
-service carries the forwarded \gls{SpW} packets, and the \emph{rmap} service
-implements the pseudo-\gls{RMAP} interface (see Section~\ref{sec:rmapif}).
+connections with \texttt{select()}. The services are the \emph{data}
+services, one per configured data endpoint, which carry the forwarded
+\gls{SpW} packets, and the \emph{rmap} service, which implements the
+pseudo-\gls{RMAP} interface (see Section~\ref{sec:rmapif}).
 Each service has its own accept and poll thread; the RMAP service is always
 started as a listening server, even when the data path runs in client mode.
 A peer that stays silent for more than 30 seconds is dropped.
@@ -432,9 +436,10 @@ same path is used in reverse for packets received from the link.
 \section{Data Flow}
 
 In the \emph{network to SpaceWire} direction, a poll thread waits for data on
-the data service, frames it according to the selected mode, logs it, and hands
+each data service, frames it according to the selected mode, logs it, and hands
 it to \texttt{spw\_send\_packet} which transmits it on the \gls{SpW} link (see
-Figure~\ref{fig:block}). The
+Figure~\ref{fig:block}); the packet is also routed to all other established
+data connections. The
 rmap service instead parses a pseudo-\gls{RMAP} command header (see
 Section~\ref{sec:rmapif}) and issues the corresponding read or write command.
 \\
@@ -444,7 +449,8 @@ receives a packet and calls \texttt{net\_pkt\_sink}. Depending on the
 configuration, the packet is logged, its PUS sequence is checked, and any
 RMAP replies (identified by the RMAP protocol identifier byte after the
 skipped header) are forwarded to the RMAP service clients. The data is then
-forwarded to the data service clients, optionally wrapped in a GRESB packet.
+forwarded to the clients of all data services, optionally wrapped in a GRESB
+packet.
 \\
 With the \texttt{-W} sniffer option, every packet received or sent on the
 network interface and on the GRESB ports is additionally mirrored to the
@@ -472,8 +478,9 @@ The full option set is:
 	\texttt{-n PATH}	& routing path, colon-separated hex bytes, one byte per node \\
 	\texttt{-p PORT}	& local data port number (default 1234) \\
 	\texttt{-s ADDRESS}	& local source address (default 0.0.0.0) \\
-	\texttt{-r HOST:PORT}& client mode: address and port of the remote target \\
-	\texttt{-u}		& use UDP instead of TCP \\
+	\texttt{-l HOST:PORT}& open a listen endpoint in server mode, repeatable; when given, the default endpoint (\texttt{-p}/\texttt{-s}) is not opened \\
+	\texttt{-r HOST:PORT}& client mode: address and port of the remote target, repeatable; each \texttt{-r} opens one outgoing connection \\
+	\texttt{-u}		& use UDP instead of TCP (not combinable with \texttt{-l} or \texttt{-r}) \\
 	\texttt{-d NUM}		& number of header bytes to drop from incoming \gls{SpW} packets (default 0); with \texttt{-D} the dropped bytes are shown in the debug printout \\
 	\texttt{-t USEC}	& throttle: delay in microseconds inserted before each \gls{SpW} packet (default 0) \\
 	\texttt{-S MBPS}	& link speed in Mbit/s (default 10, valid range 2--400) \\
@@ -503,20 +510,32 @@ The bridge supports three modes of operation:
 
 \begin{itemize}
 
-\item \emph{server mode} (default): the bridge listens on the configured
-address and port for an arbitrary number of TCP connections. Every connected
-peer receives the \gls{SpW} traffic, and data from any peer is transmitted on
-the \gls{SpW} link.\\
+\item \emph{server mode} (default): the bridge listens for an arbitrary
+number of TCP connections on the configured address and port, or on one
+listen endpoint per \texttt{-l} option, which replaces the default endpoint.
+Every connected peer receives the \gls{SpW} traffic, and data from any peer
+is transmitted on the \gls{SpW} link and routed to all other peers.\\
 
-\item \emph{client mode} (\texttt{-r}): the bridge connects to the specified
-\texttt{HOST:PORT} and operates a single connection. If the link is lost,
-the bridge terminates.\\
+\item \emph{client mode} (\texttt{-r}): the bridge connects to the
+\texttt{HOST:PORT} targets given, one outgoing connection per \texttt{-r}
+option, and routes the data of every connection to the \gls{SpW} link and to
+all other connections. When the last outgoing connection is lost, the bridge
+terminates.\\
 
 \item \emph{UDP mode} (\texttt{-u}): the bridge binds a UDP socket and sends
 one datagram per \gls{SpW} packet. Peers are registered as they are seen,
-i.e. the first datagram from a host registers it as a recipient.\\
+i.e. the first datagram from a host registers it as a recipient. The
+\texttt{-l} and \texttt{-r} endpoints are TCP only and can not be combined
+with \texttt{-u}.\\
 
 \end{itemize}
+
+\noindent
+The \texttt{-l} and \texttt{-r} options may be combined; the bridge then
+listens on the \texttt{-l} endpoints and additionally connects to the
+\texttt{-r} targets, and all connections share the same routing. In this
+case the loss of an outgoing connection does not terminate the bridge while
+listen endpoints remain.
 
 \section{SpaceWire Configuration}
 
@@ -580,8 +599,9 @@ other, without adding or stripping a routing header and without any
 interpretation on the forwarding path. The bridge neither inserts routing
 bytes nor drops packet headers, and the forwarded \gls{SpW} transactions
 remain atomic. The network side works as before, but it only observes: all
-data received from the network is discarded, and the connected clients
-receive a mirror of the copied \gls{SpW} traffic in both directions. The
+data received from the network is discarded, and the connected clients of
+every data endpoint receive a mirror of the copied \gls{SpW} traffic in both
+directions. The
 channel selection \texttt{-c} and the header-drop option \texttt{-d} are
 ignored; the routing path given with \texttt{-n} is not applied to the copied
 packets. The link signalling rate set with \texttt{-S} is applied to both
@@ -682,7 +702,7 @@ hex octets, sixteen per line, with an empty line closing the dump.
 
 The \texttt{-W} option opens a sniffer port on the machine running the bridge:
 it listens on port 3064, the port the \gls{GRESB} reserves for its traffic
-sniffer. Every packet received or sent on the regular network interface port,
+sniffer. Every packet received or sent on the regular network interface ports,
 as well as every packet received or sent on the configured GRESB virtual link
 ports, is mirrored to the connected sniffer clients. The stream is
 deduplicated: a packet that the bridge relays onto both the network interface
@@ -858,6 +878,23 @@ Transmit and receive on channel 2 of the first detected device:
   $ ./spw_bridge -c 2
 \end{lstlisting}
 
+\subsection{Multiple Data Endpoints}
+
+To serve two data endpoints instead of the default one and route the traffic
+of every connection to the \gls{SpW} link and to all other connections:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 2 -l 0.0.0.0:5573 -l 0.0.0.0:5574
+\end{lstlisting}
+
+\noindent
+A listen endpoint may be combined with an outgoing connection, e.g. to attach
+a local observer while forwarding to a remote bridge:
+
+\begin{lstlisting}[language=bash]
+  $ ./spw_bridge -c 2 -l 127.0.0.1:5573 -r remotehost:5573
+\end{lstlisting}
+
 \subsection{Link Monitoring}
 
 To observe the traffic between two \gls{SpW} targets connected to channels 1
@@ -945,7 +982,7 @@ bridge with the GRESB option and set the link speed to 10\,Mbit/s:
 \noindent
 The GRESB uses a base port number of 3000 with two ports per virtual link
 (the even port for transmit, the odd port for receive). In addition to the
-regular network port, the bridge raises the two ports of the selected virtual
+regular data endpoints, the bridge raises the two ports of the selected virtual
 link itself, by default virtual link 0: port 3000 only sends copies of the
 GRESB packets that would be transmitted via the default port, port 3001 only
 receives packets which could also be received via the default port. Another

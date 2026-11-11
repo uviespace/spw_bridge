@@ -32,6 +32,13 @@
 
 enum net_mode {MODE_SERVER, MODE_CLIENT, MODE_DGRAM};
 
+
+/* one data endpoint given on the command line with -l or -r */
+struct net_endpoint {
+	char		host[128];
+	uint32_t	port;
+};
+
 struct bridge_cfg;
 struct net_state;
 struct spw_state;
@@ -77,6 +84,12 @@ struct bridge_cfg {
 	bool		crc_check;
 	char		host[128];
 	uint8_t		path[256];
+	struct net_endpoint	*listen_eps;
+	size_t			listen_eps_n;
+	size_t			listen_eps_cap;
+	struct net_endpoint	*client_eps;
+	size_t			client_eps_n;
+	size_t			client_eps_cap;
 	bridge_pkt_sink		pkt_sink;
 	struct net_state		*net;
 	struct spw_state		*spw;

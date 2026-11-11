@@ -77,8 +77,9 @@ static void print_usage(const char *prog, struct bridge_cfg *cfg)
 	printf("  -c CHANNEL                SpW channel to use (default %u)\n", cfg->channel);
 	printf("  -n 01:1a:cc:..            SpW address nodes route/path in hex bytes (1 byte per node)\n");
 	printf("  -p PORT                   local port number (default %u)\n", cfg->port);
-	printf("  -s ADDRESS                local source address (default: %s:%u\n", cfg->host, cfg->port);
-	printf("  -r ADDRESS:PORT           client mode: address and port of remote target\n");
+	printf("  -s ADDRESS                local source address (default: %s:%u)\n", cfg->host, cfg->port);
+	printf("  -l ADDRESS:PORT           open a data listen endpoint (server mode), repeatable; when given, the default endpoint (-p/-s) is not opened\n");
+	printf("  -r ADDRESS:PORT           connect to a remote target (client mode), repeatable, each -r opens one outgoing connection\n");
 	printf("  -u                        use UDP instead of TCP/IP\n");
 	printf("  -d NUM                    number of header bytes to drop from incoming SpW packet (default %zu)\n", cfg->skip_header_bytes);
 	printf("  -t timeout (µs)           throttle transmission of SpW packets by inserting a delay between packets (default %u)\n", cfg->pkt_throttle_usec);
@@ -198,6 +199,12 @@ static void bridge_cfg_init(struct bridge_cfg *cfg)
 	cfg->debug_short = false;
 	cfg->crc_check = true;
 	snprintf(cfg->host, sizeof(cfg->host), "%s", DEFAULT_ADDR);
+	cfg->listen_eps = NULL;
+	cfg->listen_eps_n = 0;
+	cfg->listen_eps_cap = 0;
+	cfg->client_eps = NULL;
+	cfg->client_eps_n = 0;
+	cfg->client_eps_cap = 0;
 }
 
 
@@ -233,30 +240,75 @@ static void opt_source(struct bridge_cfg *cfg)
 }
 
 
-static void opt_client(struct bridge_cfg *cfg)
+static struct net_endpoint *cfg_add_endpoint(struct net_endpoint **eps,
+					      size_t *n, size_t *cap)
+{
+	struct net_endpoint *tmp;
+
+
+	if ((*n) == (*cap)) {
+		(*cap) = (*cap) ? (*cap) * 2 : 2;
+		tmp = (struct net_endpoint *)realloc((*eps),
+						     (*cap) * sizeof(struct net_endpoint));
+		if (!tmp) {
+			perror("realloc");
+			exit(EXIT_FAILURE);
+		}
+
+		(*eps) = tmp;
+	}
+
+	(*n)++;
+
+	return &(*eps)[(*n) - 1];
+}
+
+
+static void parse_endpoint(const char *opt, char *arg, struct net_endpoint *ep)
 {
 	char *node_addr;
 
-	cfg->mode = MODE_CLIENT;
 
 	/* redundant, the resolved address below repeats this split */
-	node_addr = strtok(optarg, ":");
+	node_addr = strtok(arg, ":");
 	if (!node_addr) {
-		printf("error: -r requires a host, use <address>:<port>\n");
+		printf("error: %s requires a host, use <address>:<port>\n", opt);
 		exit(EXIT_FAILURE);
 	}
 
-	snprintf(cfg->host, sizeof(cfg->host), "%s", node_addr);
+	snprintf(ep->host, sizeof(ep->host), "%s", node_addr);
 	node_addr = strtok(NULL, ":");
 	if (!node_addr) {
-		printf("error: -r requires a port, use <address>:<port>\n");
+		printf("error: %s requires a port, use <address>:<port>\n", opt);
 		exit(EXIT_FAILURE);
 	}
 
-	if (parse_port(&cfg->port, node_addr))
+	if (parse_port(&ep->port, node_addr))
 		exit(EXIT_FAILURE);
 
-	resolve_host_addr(optarg, cfg->host, sizeof(cfg->host));
+	resolve_host_addr(arg, ep->host, sizeof(ep->host));
+}
+
+
+static void opt_client(struct bridge_cfg *cfg)
+{
+	struct net_endpoint *ep;
+
+
+	ep = cfg_add_endpoint(&cfg->client_eps, &cfg->client_eps_n,
+			      &cfg->client_eps_cap);
+	parse_endpoint("-r", optarg, ep);
+}
+
+
+static void opt_listen(struct bridge_cfg *cfg)
+{
+	struct net_endpoint *ep;
+
+
+	ep = cfg_add_endpoint(&cfg->listen_eps, &cfg->listen_eps_n,
+			      &cfg->listen_eps_cap);
+	parse_endpoint("-l", optarg, ep);
 }
 
 
@@ -475,7 +527,7 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 	int opt;
 
 
-	while ((opt = getopt(argc, argv, "i:c:n:p:s:r:d:t:L:S:uCDPFG::XRM:E::NhW::")) != -1) {
+	while ((opt = getopt(argc, argv, "i:c:n:p:s:l:r:d:t:L:S:uCDPFG::XRM:E::NhW::")) != -1) {
 		switch (opt) {
 		case 'i':
 			opt_dev_num(cfg);
@@ -491,6 +543,9 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 			break;
 		case 's':
 			opt_source(cfg);
+			break;
+		case 'l':
+			opt_listen(cfg);
 			break;
 		case 'r':
 			opt_client(cfg);
@@ -551,6 +606,18 @@ static void parse_options(struct bridge_cfg *cfg, int argc, char **argv)
 			exit(0);
 		}
 	}
+
+	/* the -l and -r endpoints are TCP only, the dgram mode has one socket */
+	if ((cfg->listen_eps_n || cfg->client_eps_n) && cfg->mode == MODE_DGRAM) {
+		printf("error: -u can not be combined with -l or -r\n");
+		exit(EXIT_FAILURE);
+	}
+
+	/* listening takes precedence, a bridge that listens may still dial out */
+	if (cfg->listen_eps_n)
+		cfg->mode = MODE_SERVER;
+	else if (cfg->client_eps_n)
+		cfg->mode = MODE_CLIENT;
 }
 
 
@@ -764,6 +831,9 @@ int main(int argc, char **argv)
 	net_release(&cfg);
 	spw_dispose_ops(&cfg);
 	spw_release(&cfg);
+
+	free(cfg.listen_eps);
+	free(cfg.client_eps);
 
 	return 0;
 }

@@ -85,14 +85,17 @@ struct pus_seq {
 
 struct net_state {
 	struct bridge_cfg	*cfg;
-	bool			is_client;
-	int			client_sock;
+	int			*client_fds;
+	size_t			client_fds_n;
+	size_t			client_fds_cap;
+	pthread_mutex_t		client_lock;
 	struct pus_seq		*pus_seq_tx;
 	size_t			pus_seq_tx_n;
 	struct pus_seq		*pus_seq_rx;
 	size_t			pus_seq_rx_n;
-	pthread_t		th_main;	/* accept in server mode, poll in client mode */
-	pthread_t		th_poll;
+	/* accept and poll threads of the data endpoints, in spawn order */
+	pthread_t		*th_data;
+	size_t			th_data_n;
 	pthread_t		th_rmap_accept;
 	pthread_t		th_rmap_poll;
 	pthread_t		th_gresb_tx_accept;
@@ -101,7 +104,9 @@ struct net_state {
 	pthread_t		th_gresb_rx_poll;
 	pthread_t		th_sniff_accept;
 	pthread_t		th_sniff_poll;
-	struct net_service	data;
+	/* one service per data endpoint, listen and client alike */
+	struct net_service	*data;
+	size_t			data_n;
 	struct net_service	rmap;
 	struct net_service	gresb_tx;
 	struct net_service	gresb_rx;
@@ -413,6 +418,69 @@ static void conn_del(struct net_service *svc, int sockfd)
 }
 
 
+static void client_conn_add(struct net_state *st, int sockfd)
+{
+	int *tmp;
+
+
+	pthread_mutex_lock(&st->client_lock);
+
+	if (st->client_fds_n == st->client_fds_cap) {
+		st->client_fds_cap = st->client_fds_cap ? st->client_fds_cap * 2 : 4;
+		tmp = realloc(st->client_fds, st->client_fds_cap * sizeof(int));
+		if (!tmp) {
+			perror("realloc");
+			exit(EXIT_FAILURE);
+		}
+
+		st->client_fds = tmp;
+	}
+
+	st->client_fds[st->client_fds_n] = sockfd;
+	st->client_fds_n++;
+
+	pthread_mutex_unlock(&st->client_lock);
+}
+
+
+static bool client_conn_del(struct net_state *st, int sockfd)
+{
+	size_t i;
+
+
+	for (i = 0; i < st->client_fds_n; i++)
+		if (st->client_fds[i] == sockfd)
+			break;
+
+	if (i == st->client_fds_n)
+		return false;
+
+	/* swap in the tail, the order of the entries does not matter */
+	st->client_fds[i] = st->client_fds[st->client_fds_n - 1];
+	st->client_fds_n--;
+
+	return true;
+}
+
+
+static void client_link_lost(struct net_state *st, int sockfd)
+{
+	pthread_mutex_lock(&st->client_lock);
+
+	/* without a listen endpoint there is nothing left to bridge once the
+	 * last outgoing connection is gone
+	 */
+	if (client_conn_del(st, sockfd) && !st->client_fds_n &&
+	    st->cfg->mode == MODE_CLIENT) {
+		pthread_mutex_unlock(&st->client_lock);
+		printf("Client link lost, shutting down\n");
+		exit(EXIT_FAILURE);
+	}
+
+	pthread_mutex_unlock(&st->client_lock);
+}
+
+
 static void conn_drop(struct net_service *svc, int sockfd, bool error)
 {
 	/* a recv() EOF is a clean peer close, not an error */
@@ -424,10 +492,7 @@ static void conn_drop(struct net_service *svc, int sockfd, bool error)
 	close(sockfd);
 	conn_del(svc, sockfd);
 
-	if (svc->state->is_client) {
-		printf("Client link lost, shutting down\n");
-		exit(EXIT_FAILURE);
-	}
+	client_link_lost(svc->state, sockfd);
 }
 
 
@@ -442,10 +507,7 @@ static void conn_drop_locked(struct net_service *svc, int sockfd, bool error)
 	/* caller holds svc->lock, so clear the fd set directly */
 	FD_CLR(sockfd, &svc->conn_set);
 
-	if (svc->state->is_client) {
-		printf("Client link lost, shutting down\n");
-		exit(EXIT_FAILURE);
-	}
+	client_link_lost(svc->state, sockfd);
 }
 
 
@@ -840,6 +902,98 @@ static void sniff_push(struct bridge_cfg *cfg, const uint8_t *buf, size_t len)
 }
 
 
+static void gresb_push_rx_clients(struct bridge_cfg *cfg, const uint8_t *buf,
+				  size_t len)
+{
+	int fd;
+
+	uint8_t *gresb_pkt;
+
+	struct net_service *svc;
+
+
+	svc = &cfg->net->gresb_rx;
+
+	/* the receive ports are only opened in server mode */
+	if (cfg->mode != MODE_SERVER || !svc->sock_fd)
+		return;
+
+	gresb_pkt = gresb_create_host_data_pkt(buf, len);
+	if (!gresb_pkt) {
+		printf("Error creating GRESB packet, dropping the SpW packet\n");
+		return;
+	}
+
+	pthread_mutex_lock(&svc->lock);
+	for (fd = 0; fd < svc->nfds; fd++) {
+		if (!FD_ISSET(fd, &svc->conn_set))
+			continue;
+
+		if (send_all(fd, gresb_pkt,
+			     gresb_get_host_data_pkt_size(gresb_pkt)) == -1)
+			conn_drop_locked(svc, fd, 1);
+	}
+	pthread_mutex_unlock(&svc->lock);
+
+	gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
+}
+
+
+/* send to every established data connection except skip_fd, -1 skips none */
+static void data_send_all(struct bridge_cfg *cfg, int skip_fd,
+			  const uint8_t *buf, size_t len)
+{
+	int fd;
+
+	size_t s;
+
+	uint8_t *gresb_pkt;
+
+	struct net_state *st;
+
+	struct net_service *svc;
+
+
+	st = cfg->net;
+
+	gresb_pkt = NULL;
+
+	if (cfg->enable_gresb) {
+		gresb_pkt = gresb_create_host_data_pkt(buf, len);
+		if (!gresb_pkt) {
+			printf("Error creating GRESB packet, dropping the SpW packet\n");
+			return;
+		}
+	}
+
+	for (s = 0; s < st->data_n; s++) {
+		svc = &st->data[s];
+
+		pthread_mutex_lock(&svc->lock);
+		for (fd = 0; fd < svc->nfds; fd++) {
+			if (!FD_ISSET(fd, &svc->conn_set) || fd == skip_fd)
+				continue;
+
+			if (!cfg->enable_gresb) {
+				if (send_all(fd, buf, len) == -1)
+					conn_drop_locked(svc, fd, 1);
+			} else {
+				if (send_all(fd, gresb_pkt,
+					     gresb_get_host_data_pkt_size(gresb_pkt)) == -1)
+					conn_drop_locked(svc, fd, 1);
+			}
+		}
+		pthread_mutex_unlock(&svc->lock);
+	}
+
+	if (cfg->enable_gresb) {
+		gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
+
+		gresb_push_rx_clients(cfg, buf, len);
+	}
+}
+
+
 static void net_to_spw(struct net_service *svc, int sockfd)
 {
 	size_t packet_length;
@@ -888,6 +1042,10 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 	rmap_parse_pkt(recv_buffer, packet_length);
 
 	spw_send_packet(cfg, recv_buffer, packet_length);
+
+	/* route the packet to all other established data connections */
+	if (cfg->mode != MODE_DGRAM)
+		data_send_all(cfg, sockfd, recv_buffer, packet_length);
 
 	free(recv_buffer);
 }
@@ -1155,43 +1313,6 @@ static void gresb_rx_discard(struct net_service *svc, int sockfd)
 }
 
 
-static void gresb_push_rx_clients(struct bridge_cfg *cfg, const uint8_t *buf,
-				  size_t len)
-{
-	int fd;
-
-	uint8_t *gresb_pkt;
-
-	struct net_service *svc;
-
-
-	svc = &cfg->net->gresb_rx;
-
-	/* the receive ports are only opened in server mode */
-	if (cfg->mode != MODE_SERVER || !svc->sock_fd)
-		return;
-
-	gresb_pkt = gresb_create_host_data_pkt(buf, len);
-	if (!gresb_pkt) {
-		printf("Error creating GRESB packet, dropping the SpW packet\n");
-		return;
-	}
-
-	pthread_mutex_lock(&svc->lock);
-	for (fd = 0; fd < svc->nfds; fd++) {
-		if (!FD_ISSET(fd, &svc->conn_set))
-			continue;
-
-		if (send_all(fd, gresb_pkt,
-			     gresb_get_host_data_pkt_size(gresb_pkt)) == -1)
-			conn_drop_locked(svc, fd, 1);
-	}
-	pthread_mutex_unlock(&svc->lock);
-
-	gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
-}
-
-
 /**
  * @brief handle a complete packet received on the SpW link
  *
@@ -1254,18 +1375,15 @@ void net_pkt_sink(struct bridge_cfg *cfg, __attribute__((unused)) uint32_t chan,
 
 void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t len)
 {
-	int fd;
-
 	uint8_t *gresb_pkt;
 
 	struct net_service *svc;
 
 
-	svc = &cfg->net->data;
+	/* in dgram mode the single data service holds the socket */
+	svc = &cfg->net->data[0];
 
 	sniff_push(cfg, buf, len);
-
-	gresb_pkt = NULL;
 
 	if (cfg->mode == MODE_DGRAM) {
 
@@ -1289,35 +1407,7 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t l
 		return;
 	}
 
-	if (cfg->enable_gresb) {
-		gresb_pkt = gresb_create_host_data_pkt(buf, len);
-		if (!gresb_pkt) {
-			printf("Error creating GRESB packet, dropping the SpW packet\n");
-			return;
-		}
-	}
-
-	pthread_mutex_lock(&svc->lock);
-	for (fd = 0; fd < svc->nfds; fd++) {
-		if (!FD_ISSET(fd, &svc->conn_set))
-			continue;
-
-		if (!cfg->enable_gresb) {
-			if (send_all(fd, buf, len) == -1)
-				conn_drop_locked(svc, fd, 1);
-		} else {
-			if (send_all(fd, gresb_pkt,
-				     gresb_get_host_data_pkt_size(gresb_pkt)) == -1)
-				conn_drop_locked(svc, fd, 1);
-		}
-	}
-	pthread_mutex_unlock(&svc->lock);
-
-	if (cfg->enable_gresb) {
-		gresb_destroy_host_data_pkt((struct host_to_gresb_pkt *)gresb_pkt);
-
-		gresb_push_rx_clients(cfg, buf, len);
-	}
+	data_send_all(cfg, -1, buf, len);
 }
 
 
@@ -1331,9 +1421,19 @@ void net_start(struct bridge_cfg *cfg)
 {
 	int ret;
 
-	char url[256];
+	int sockfd;
+
+	size_t i;
+	size_t n_listen;
+	size_t n_client;
+	size_t n_svc;
+	size_t n_th;
 
 	struct net_state *st;
+
+	struct net_service *svc;
+
+	char url[256];
 
 
 	st = (struct net_state *)calloc(1, sizeof(struct net_state));
@@ -1345,60 +1445,149 @@ void net_start(struct bridge_cfg *cfg)
 	cfg->net = st;
 	st->cfg = cfg;
 
-	pthread_mutex_init(&st->data.lock, NULL);
+	pthread_mutex_init(&st->client_lock, NULL);
 	pthread_mutex_init(&st->rmap.lock, NULL);
 
-	st->data.state = st;
-	st->data.handle_pkt = net_to_spw;
 	st->rmap.state = st;
 	st->rmap.handle_pkt = rmap_net_to_spw;
 
-	snprintf(url, sizeof(url), "%s:%u", cfg->host, cfg->port);
+	/* count the data endpoints: the -l endpoints replace the default one,
+	 * outgoing connections from -r are added on top of the listeners
+	 */
+	n_listen = 0;
+	n_client = 0;
+
+	if (cfg->mode == MODE_SERVER) {
+		n_listen = cfg->listen_eps_n ? cfg->listen_eps_n : 1;
+		n_client = cfg->client_eps_n;
+	} else if (cfg->mode == MODE_CLIENT) {
+		n_client = cfg->client_eps_n;
+	}
+
+	/* dgram mode runs a single service that owns the socket */
+	n_svc = cfg->mode == MODE_DGRAM ? 1 : n_listen + n_client;
+	n_th = cfg->mode == MODE_DGRAM ? 1 : n_listen * 2 + n_client;
+
+	st->data = (struct net_service *)calloc(n_svc, sizeof(struct net_service));
+	st->th_data = (pthread_t *)calloc(n_th, sizeof(pthread_t));
+	if (!st->data || !st->th_data) {
+		perror("calloc");
+		exit(EXIT_FAILURE);
+	}
+
+	st->data_n = n_svc;
+
+	for (i = 0; i < n_svc; i++) {
+		svc = &st->data[i];
+
+		pthread_mutex_init(&svc->lock, NULL);
+		svc->state = st;
+		svc->handle_pkt = net_to_spw;
+	}
 
 	if (cfg->mode == MODE_SERVER) {
 
-		st->data.sock_fd = bind_server_socket(url, &st->data.conn_set);
+		for (i = 0; i < n_listen; i++) {
+			svc = &st->data[i];
 
-		if ((ret = pthread_create(&st->th_main, NULL, accept_connections, &st->data))) {
-			printf("Epic fail in pthread_create: %s\n", strerror(ret));
-			exit(EXIT_FAILURE);
+			if (cfg->listen_eps_n)
+				snprintf(url, sizeof(url), "%s:%u",
+					 cfg->listen_eps[i].host,
+					 cfg->listen_eps[i].port);
+			else
+				snprintf(url, sizeof(url), "%s:%u",
+					 cfg->host, cfg->port);
+
+			svc->sock_fd = bind_server_socket(url, &svc->conn_set);
+
+			if ((ret = pthread_create(&st->th_data[st->th_data_n], NULL,
+						  accept_connections, svc))) {
+				printf("Epic fail in pthread_create: %s\n", strerror(ret));
+				exit(EXIT_FAILURE);
+			}
+			st->th_data_n++;
+
+			if ((ret = pthread_create(&st->th_data[st->th_data_n], NULL,
+						  poll_socket, svc))) {
+				printf("Epic fail in pthread_create: %s\n", strerror(ret));
+				exit(EXIT_FAILURE);
+			}
+			st->th_data_n++;
 		}
 
-		if ((ret = pthread_create(&st->th_poll, NULL, poll_socket, &st->data))) {
-			printf("Epic fail in pthread_create: %s\n", strerror(ret));
-			exit(EXIT_FAILURE);
+		for (i = 0; i < n_client; i++) {
+			svc = &st->data[n_listen + i];
+
+			snprintf(url, sizeof(url), "%s:%u",
+				 cfg->client_eps[i].host,
+				 cfg->client_eps[i].port);
+
+			sockfd = connect_client_socket(svc, url);
+			if (sockfd < 0) {
+				printf("Failed to connect to %s\n", url);
+				exit(EXIT_FAILURE);
+			}
+
+			client_conn_add(st, sockfd);
+
+			if ((ret = pthread_create(&st->th_data[st->th_data_n], NULL,
+						  poll_socket, svc))) {
+				printf("Epic fail in pthread_create: %s\n", strerror(ret));
+				exit(EXIT_FAILURE);
+			}
+			st->th_data_n++;
+
+			printf("Connected to %s\n", url);
 		}
 
 		printf("Started in SERVER mode\n");
 
 	} else if (cfg->mode == MODE_DGRAM) {
 
-		st->data.sock_fd = bind_dgram_socket(url);
+		svc = &st->data[0];
 
-		FD_ZERO(&st->data.conn_set);
-		FD_SET(st->data.sock_fd, &st->data.conn_set);
-		st->data.nfds = st->data.sock_fd + 1;
+		snprintf(url, sizeof(url), "%s:%u", cfg->host, cfg->port);
 
-		if ((ret = pthread_create(&st->th_main, NULL, poll_socket, &st->data))) {
+		svc->sock_fd = bind_dgram_socket(url);
+
+		FD_ZERO(&svc->conn_set);
+		FD_SET(svc->sock_fd, &svc->conn_set);
+		svc->nfds = svc->sock_fd + 1;
+
+		if ((ret = pthread_create(&st->th_data[st->th_data_n], NULL,
+					  poll_socket, svc))) {
 			printf("Epic fail in pthread_create: %s\n", strerror(ret));
 			exit(EXIT_FAILURE);
 		}
+		st->th_data_n++;
 
 		printf("Started in DGRAM mode\n");
 
 	} else {
 
-		st->client_sock = connect_client_socket(&st->data, url);
-		if (st->client_sock < 0) {
-			printf("Failed to connect to %s\n", url);
-			exit(EXIT_FAILURE);
-		}
+		for (i = 0; i < n_client; i++) {
+			svc = &st->data[i];
 
-		st->is_client = true;
+			snprintf(url, sizeof(url), "%s:%u",
+				 cfg->client_eps[i].host,
+				 cfg->client_eps[i].port);
 
-		if ((ret = pthread_create(&st->th_main, NULL, poll_socket, &st->data))) {
-			printf("Epic fail in pthread_create: %s\n", strerror(ret));
-			exit(EXIT_FAILURE);
+			sockfd = connect_client_socket(svc, url);
+			if (sockfd < 0) {
+				printf("Failed to connect to %s\n", url);
+				exit(EXIT_FAILURE);
+			}
+
+			client_conn_add(st, sockfd);
+
+			if ((ret = pthread_create(&st->th_data[st->th_data_n], NULL,
+						  poll_socket, svc))) {
+				printf("Epic fail in pthread_create: %s\n", strerror(ret));
+				exit(EXIT_FAILURE);
+			}
+			st->th_data_n++;
+
+			printf("Connected to %s\n", url);
 		}
 
 		printf("Started in CLIENT mode\n");
@@ -1504,15 +1693,15 @@ void net_start(struct bridge_cfg *cfg)
 
 void net_stop(struct bridge_cfg *cfg)
 {
+	size_t i;
+
 	struct net_state *st;
 
 
 	st = cfg->net;
 
-	pthread_cancel(st->th_main);
-
-	if (st->th_poll)
-		pthread_cancel(st->th_poll);
+	for (i = 0; i < st->th_data_n; i++)
+		pthread_cancel(st->th_data[i]);
 
 	if (cfg->enable_rmap) {
 		pthread_cancel(st->th_rmap_accept);
@@ -1531,8 +1720,9 @@ void net_stop(struct bridge_cfg *cfg)
 		pthread_cancel(st->th_sniff_poll);
 	}
 
-	if (st->data.sock_fd)
-		close(st->data.sock_fd);
+	for (i = 0; i < st->data_n; i++)
+		if (st->data[i].sock_fd)
+			close(st->data[i].sock_fd);
 
 	if (st->rmap.sock_fd)
 		close(st->rmap.sock_fd);
@@ -1550,16 +1740,14 @@ void net_stop(struct bridge_cfg *cfg)
 			close(st->sniff.sock_fd);
 	}
 
-	if (st->client_sock)
-		close(st->client_sock);
+	for (i = 0; i < st->client_fds_n; i++)
+		close(st->client_fds[i]);
 
 	/* collect the network threads, they may be mid-transmit when killed,
 	 * so do not dispose anything until they have wound down
 	 */
-	pthread_join(st->th_main, NULL);
-
-	if (st->th_poll)
-		pthread_join(st->th_poll, NULL);
+	for (i = 0; i < st->th_data_n; i++)
+		pthread_join(st->th_data[i], NULL);
 
 	if (cfg->enable_rmap) {
 		pthread_join(st->th_rmap_accept, NULL);
@@ -1591,8 +1779,17 @@ void net_stop(struct bridge_cfg *cfg)
 
 void net_release(struct bridge_cfg *cfg)
 {
-	pthread_mutex_destroy(&cfg->net->data.lock);
+	size_t i;
+
+
+	for (i = 0; i < cfg->net->data_n; i++) {
+		pthread_mutex_destroy(&cfg->net->data[i].lock);
+
+		free(cfg->net->data[i].clients);
+	}
+
 	pthread_mutex_destroy(&cfg->net->rmap.lock);
+	pthread_mutex_destroy(&cfg->net->client_lock);
 
 	if (cfg->enable_gresb && cfg->mode == MODE_SERVER) {
 		pthread_mutex_destroy(&cfg->net->gresb_tx.lock);
@@ -1608,8 +1805,10 @@ void net_release(struct bridge_cfg *cfg)
 		free(cfg->net->sniff.clients);
 	}
 
-	free(cfg->net->data.clients);
+	free(cfg->net->data);
 	free(cfg->net->rmap.clients);
+	free(cfg->net->th_data);
+	free(cfg->net->client_fds);
 
 	free(cfg->net);
 	cfg->net = NULL;
