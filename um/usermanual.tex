@@ -239,7 +239,8 @@ GRESB-encapsulated form.\\
 
 The bridge consists of a small set of dedicated source files:
 
-\begin{tabu} to \linewidth {@{}ll@{}}
+\noindent
+\begin{tabu} to \linewidth {@{}lX[l]@{}}
 	\texttt{spw\_bridge.c}	& main program: option processing, startup and shutdown \\
 	\texttt{spw\_bridge.h}	& shared configuration and subsystem interfaces \\
 	\texttt{net.c}		& network subsystem: sockets, framing, packet sink \\
@@ -472,7 +473,8 @@ The bridge runs until it is interrupted; \texttt{SIGINT}, \texttt{SIGTERM}
 and \texttt{SIGHUP} terminate the program and shut down the device cleanly.
 The full option set is:
 
-\begin{tabu} to \linewidth {@{}ll@{}}
+\noindent
+\begin{tabu} to \linewidth {@{}lX[l]@{}}
 	\texttt{-i DEVNUM}	& \gls{SpW} device id to use (default 0) \\
 	\texttt{-c CHANNEL}	& \gls{SpW} channel to use (default 1) \\
 	\texttt{-n PATH}	& routing path, colon-separated hex bytes, one byte per node \\
@@ -673,7 +675,8 @@ data words of a packet that carries data:
 \noindent
 The printed fields are
 
-\begin{tabu} to \linewidth {@{}ll@{}}
+\noindent
+\begin{tabu} to \linewidth {@{}lX[l]@{}}
 	\texttt{SPW[A]->SPW[B]}	& direction of travel: the channel the packet was received on, and the channel it is copied to \\
 	\texttt{CMD}, \texttt{REPLY} & whether the packet is an \gls{RMAP} command or a reply \\
 	\texttt{WRITE}, \texttt{READ} & the operation of an \gls{RMAP} command \\
@@ -773,6 +776,7 @@ and for the corresponding telemetry (TM) return traffic
 \noindent
 The printed fields are
 
+\noindent
 \begin{tabu} to \linewidth {@{}ll@{}}
 	\texttt{APID}		& application process identifier of the CCSDS primary header \\
 	\texttt{type}		& \texttt{TM} or \texttt{TC} \\
@@ -833,6 +837,7 @@ command interface. Each command has the form
 encoded as a ten-byte header, followed by the write payload for write
 operations:
 
+\noindent
 \begin{tabu} to \linewidth {@{}ll@{}}
 	byte 0		& target \gls{SpW} logical address \\
 	byte 1		& operation: 0 = read, non-zero = write \\
