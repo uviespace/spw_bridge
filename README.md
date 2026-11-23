@@ -3,7 +3,9 @@
 A software bridge between a SpaceWire link and a TCP/IP or UDP connection to a
 workstation. It operates a SpaceWire interface device through the STAR API and
 relays packets between the SpW link and the network endpoints in either
-direction, routing the traffic of every network connection to all others. It is
+direction, routing the traffic of every network endpoint to all other
+endpoints. Clients sharing one listen endpoint form one bridge endpoint and
+do not receive each other's traffic. It is
 intended for ground support equipment, e.g. to operate the front-end electronics
 of an instrument through a SpaceWire-to-Ethernet path, or to debug a
 LEON3-FT-based target such as a GR712RC through RMAP.
@@ -152,8 +154,8 @@ Server mode with a PCIe card, transmit/receive on channel 2:
 
 	./spw_bridge -c 2
 
-Serve two data endpoints instead of the default one; data from any connection
-goes to the SpW link and to all other connections:
+Serve two data endpoints instead of the default one; data from any endpoint
+goes to the SpW link and to all other endpoints:
 
 	./spw_bridge -c 2 -l 0.0.0.0:5573 -l 0.0.0.0:5574
 

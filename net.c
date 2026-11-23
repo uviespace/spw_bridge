@@ -939,8 +939,8 @@ static void gresb_push_rx_clients(struct bridge_cfg *cfg, const uint8_t *buf,
 }
 
 
-/* send to every established data connection except skip_fd, -1 skips none */
-static void data_send_all(struct bridge_cfg *cfg, int skip_fd,
+/* send to every established data endpoint except src; NULL sends to all */
+static void data_send_all(struct bridge_cfg *cfg, struct net_service *src,
 			  const uint8_t *buf, size_t len)
 {
 	int fd;
@@ -969,9 +969,12 @@ static void data_send_all(struct bridge_cfg *cfg, int skip_fd,
 	for (s = 0; s < st->data_n; s++) {
 		svc = &st->data[s];
 
+		if (svc == src)
+			continue;
+
 		pthread_mutex_lock(&svc->lock);
 		for (fd = 0; fd < svc->nfds; fd++) {
-			if (!FD_ISSET(fd, &svc->conn_set) || fd == skip_fd)
+			if (!FD_ISSET(fd, &svc->conn_set))
 				continue;
 
 			if (!cfg->enable_gresb) {
@@ -1043,9 +1046,9 @@ static void net_to_spw(struct net_service *svc, int sockfd)
 
 	spw_send_packet(cfg, recv_buffer, packet_length);
 
-	/* route the packet to all other established data connections */
+	/* route the packet to all other established data endpoints */
 	if (cfg->mode != MODE_DGRAM)
-		data_send_all(cfg, sockfd, recv_buffer, packet_length);
+		data_send_all(cfg, svc, recv_buffer, packet_length);
 
 	free(recv_buffer);
 }
@@ -1407,7 +1410,7 @@ void net_forward_to_clients(struct bridge_cfg *cfg, const uint8_t *buf, size_t l
 		return;
 	}
 
-	data_send_all(cfg, -1, buf, len);
+	data_send_all(cfg, NULL, buf, len);
 }
 
 
